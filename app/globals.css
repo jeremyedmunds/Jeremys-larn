@@ -18,3 +18,13 @@ button{color:#343632;border-color:#b9bab2;background:#eeede7}button:hover{border
 .log p{border-color:#d2d2cb;color:#74766f}.log p.latest{color:#30332e}.inventory button{background:#e8e8e2}.item-icon{border-color:#6e9996;color:#287673;background:#f5f5f1}.cure{border-color:#b49a62;color:#755514;background:#f1eadb}.escape{background:#e5d8b9;border-color:#aa8644;color:#604515}
 .end-card{background:#f7f6f1f5;border-color:#9b7028;box-shadow:0 24px 70px #5557}.end-card p{color:#666861}
 footer{border-color:#bfc0b9}kbd{border-color:#abadA6;background:#eeeeea;color:#3d3f3a;box-shadow:0 1px 0 #fff}
+
+/* Monochrome dungeon display */
+.map-wrap{background:#050505;border-color:#303030;box-shadow:inset 0 0 70px #000,0 14px 32px #77766f35}
+.map{filter:none}
+.map .wall{color:#727272}
+.map .floor{color:#202020}
+.map .stairs{color:#f2f2f2;text-shadow:0 0 5px #fff}
+.map .player{color:#fff;text-shadow:0 0 7px #fff}
+.map .monster{color:#d2d2d2;text-shadow:none}
+.map .item,.map .item.gold,.map .item.cure{color:#a8a8a8;text-shadow:none}
