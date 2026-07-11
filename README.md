@@ -42,10 +42,19 @@ Select a projectile spell from the spell list. The game enters aiming mode. Pres
 ### 1. Install the required software
 
 Install:
+On the new Windows PC, use PowerShell.
 
-- [Git](https://git-scm.com/downloads)
-- [Node.js](https://nodejs.org/) version **22.13 or newer**
-- npm, which is included with Node.js
+Easiest method
+Right-click Start.
+Select Terminal or PowerShell.
+Install Git:
+winget install --id Git.Git -e
+Install the current Node.js LTS version:
+winget install --id OpenJS.NodeJS.LTS -e
+
+Node.js 24 LTS is currently available and satisfies the game’s requirement.
+
+Close PowerShell completely and open it again.
 
 Confirm the installations:
 
