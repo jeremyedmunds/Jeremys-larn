@@ -62,23 +62,11 @@ Open PowerShell, Windows Terminal, macOS Terminal, or a Linux shell and run:
 ```bash
 git clone https://github.com/jeremyedmunds/Jeremys-larn.git
 cd Jeremys-larn
-```
-
-### 3. Install the project dependencies
-
-On Linux or WSL:
-
-```bash
-npm run install:ci
-```
-
-The included installation script uses Linux utilities. On native Windows, use WSL or install the locked dependencies directly:
-
-```powershell
 npm ci
 ```
 
-### 4. Start the development server
+
+### 3. Start the development server
 
 ```bash
 npm run dev
@@ -91,6 +79,15 @@ http://localhost:5173
 ```
 
 Open that address in a web browser. Keep the terminal running while playing. Stop the server with `Ctrl+C`.
+
+
+Later, to run it again:
+
+cd Jeremys-larn
+npm run dev
+
+Important: your saved games will not automatically transfer because they are stored inside the original browser’s local storage. On the new PC, you will initially have no saved games.
+
 
 ## Build and run the production version locally
 
