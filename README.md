@@ -199,3 +199,4 @@ Confirm that you are using the same browser profile and the same site address. `
 ## License and source background
 
 The project was developed as a modern browser interpretation of Larn, using gameplay and data references from the Larn 12.3 source distribution. Review the original Larn licensing terms before redistributing derived material outside this repository.
+...
