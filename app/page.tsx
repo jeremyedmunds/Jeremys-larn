@@ -4,16 +4,16 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { DND_STOCK, EXPERIENCE, POTIONS, RANKS, SCROLLS, SPELLS, type ShopItem } from "./larn-data";
 
 type Point = { x: number; y: number };
-type Item = { id: string; name: string; glyph: string; kind: "heal" | "gold" | "cure" | "eye" | "weapon" | "armor" | "potion" | "scroll" | "spellbook"; amount: number; effect?:string } & Point;
+type Item = { id: string; name: string; glyph: string; kind: "heal" | "gold" | "gem" | "cure" | "eye" | "weapon" | "armor" | "potion" | "scroll" | "spellbook"; amount: number; effect?:string } & Point;
 type BagItem = { id:string; name:string; kind:"potion"|"scroll"|"misc"; effect:string; qty:number };
 type SavedGame = { id:string; name:string; savedAt:string; game:Game };
 type Monster = { id: string; name: string; glyph: string; hp: number; maxHp: number; attack: number; xp: number; gold: number } & Point;
 type Feature = Point & { id:string; kind:"trap"|"fountain"|"altar"; used:boolean };
-type Floor = { tiles: string[][]; monsters: Monster[]; items: Item[]; features:Feature[]; stairs: Point; up: Point; start: Point };
+type Floor = { tiles: string[][]; monsters: Monster[]; items: Item[]; features:Feature[]; stairs: Point; up: Point; start: Point; explored?:boolean[][] };
 type Game = {
   floor: number; tiles: string[][]; monsters: Monster[]; items: Item[]; features:Feature[]; stairs: Point; up: Point;
   player: Point & { hp: number; maxHp: number; mana:number; maxMana:number; attack: number; armor: number; strength:number; intelligence:number; wisdom:number; constitution:number; dexterity:number; charisma:number; level: number; xp: number; gold: number; bank: number; potions: number; hasEye: boolean; hasCure: boolean; weapon: string; armorName: string; spells:string[] };
-  turn: number; deadline:number; status: "playing" | "won" | "dead"; log: string[]; shopStock:number[]; bag:BagItem[]; awareness:number; floors:Record<number,Floor>;
+  turn: number; deadline:number; status: "playing" | "won" | "dead"; log: string[]; shopStock:number[]; bag:BagItem[]; awareness:number; explored:boolean[][]; gems:number; gemValue:number; floors:Record<number,Floor>;
 };
 
 const W = 41, H = 23, LAST_FLOOR = 13;
@@ -33,6 +33,8 @@ const monsterTypes = [
 
 function rng(seed: number) { let n = seed >>> 0; return () => ((n = Math.imul(n ^ (n >>> 15), 1 | n), n ^= n + Math.imul(n ^ (n >>> 7), 61 | n), ((n ^ (n >>> 14)) >>> 0) / 4294967296)); }
 function distance(a: Point, b: Point) { return Math.abs(a.x - b.x) + Math.abs(a.y - b.y); }
+function blankExplored(){return Array.from({length:H},()=>Array(W).fill(false))}
+function revealAround(explored:boolean[][],p:Point,radius=4){for(let y=Math.max(0,p.y-radius);y<=Math.min(H-1,p.y+radius);y++)for(let x=Math.max(0,p.x-radius);x<=Math.min(W-1,p.x+radius);x++)if(Math.hypot(x-p.x,y-p.y)<=radius+.35)explored[y][x]=true}
 
 function makeFloor(level: number, seed = Date.now()): Floor {
   const r = rng(seed + level * 9973);
@@ -71,6 +73,7 @@ function makeFloor(level: number, seed = Date.now()): Floor {
   for (let i = 0; i < 3; i++) {const effect=POTIONS[Math.floor(r()*Math.min(POTIONS.length,8+level))];items.push({ id: `p${level}-${i}-${seed}`, name: `potion of ${effect}`, glyph: "!", kind: "potion", effect, amount: 1, ...spot() });}
   for (let i = 0; i < 3; i++) {const effect=SCROLLS[Math.floor(r()*Math.min(SCROLLS.length,8+level))];items.push({ id: `s${level}-${i}-${seed}`, name: `scroll of ${effect}`, glyph: "?", kind: "scroll", effect, amount: 1, ...spot() });}
   for (let i = 0; i < 3; i++) items.push({ id: `c${level}-${i}-${seed}`, name: "gold", glyph: "$", kind: "gold", amount: 3 + Math.floor(r() * 10), ...spot() });
+  for (let i = 0; i < 1+Math.floor(level/4); i++) {const value=25+level*10+Math.floor(r()*40);items.push({id:`gem-${level}-${i}-${seed}`,name:["sapphire","ruby","emerald","diamond"][Math.floor(r()*4)],glyph:"*",kind:"gem",amount:value,...spot()})}
   if(r()<.38){const choices=SPELLS.slice(2,Math.min(SPELLS.length,8+level*2));const spell=choices[Math.floor(r()*choices.length)];items.push({id:`book-${level}-${seed}`,name:`spellbook: ${spell[1]}`,glyph:"+",kind:"spellbook",effect:spell[0],amount:1,...spot()})}
   if (level > 1 && r() > .45) items.push({ id:`w${level}-${seed}`, name: level > 6 ? "longsword" : "spear", glyph:")", kind:"weapon", amount: level > 6 ? 3 : 1, ...spot() });
   if (level > 2 && r() > .5) items.push({ id:`a${level}-${seed}`, name: level > 7 ? "plate armor" : "ring mail", glyph:"[", kind:"armor", amount: level > 7 ? 4 : 2, ...spot() });
@@ -94,9 +97,10 @@ function makeTown(): Floor {
 
 function freshGame(): Game {
   const f = makeTown();
+  const explored=Array.from({length:H},()=>Array(W).fill(true));f.explored=explored;
   return { floor: 0, tiles: f.tiles, monsters: f.monsters, items: f.items, features:f.features, stairs: f.stairs, up:f.up,
     player: { ...f.start, hp: 20, maxHp: 20, mana:12,maxMana:12, attack: 2, armor:0, strength:12,intelligence:12,wisdom:12,constitution:12,dexterity:12,charisma:12,level: 1, xp: 0, gold: 250, bank:0, potions: 1, hasEye:false, hasCure: false, weapon:"none", armorName:"clothes",spells:["pro","mle"] },
-    turn: 0, deadline:2500,status: "playing", shopStock:DND_STOCK.map(x=>x.stock), bag:[{id:"start-heal",name:"potion of healing",kind:"potion",effect:"healing",qty:1}],awareness:0,floors:{0:f}, log: ["Welcome to the town of Larn.", "Your daughter is dying of dianthroritis. Find the cure in the volcanic depths."] };
+    turn: 0, deadline:2500,status: "playing", shopStock:DND_STOCK.map(x=>x.stock), bag:[{id:"start-heal",name:"potion of healing",kind:"potion",effect:"healing",qty:1}],awareness:0,explored,gems:0,gemValue:0,floors:{0:f}, log: ["Welcome to the town of Larn.", "Your daughter is dying of dianthroritis. Find the cure in the volcanic depths."] };
 }
 
 function pushLog(g: Game, text: string) { g.log = [text, ...g.log].slice(0, 8); }
@@ -118,13 +122,14 @@ export default function Home() {
     const target = g.monsters.find(m => m.x === nx && m.y === ny);
     if (target) {
       const damage = g.player.attack + Math.floor(Math.random() * 4); target.hp -= damage; pushLog(g, `You strike the ${target.name} for ${damage}.`);
-      if (target.hp <= 0) { g.monsters = g.monsters.filter(m => m.id !== target.id); g.player.xp += target.xp; g.player.gold += target.gold; pushLog(g, `The ${target.name} falls. +${target.xp} XP, +${target.gold} gold.`); }
+      if (target.hp <= 0) { g.monsters = g.monsters.filter(m => m.id !== target.id); g.player.xp += target.xp;const drops:string[]=[];if(target.gold>0){g.items.push({id:`drop-gold-${target.id}`,name:"monster gold",glyph:"$",kind:"gold",amount:target.gold,x:target.x,y:target.y});drops.push(`${target.gold} gold`)}if(Math.random()<Math.min(.5,.12+g.floor*.025)){const value=30+g.floor*15+Math.floor(Math.random()*60);const name=["sapphire","ruby","emerald","diamond"][Math.floor(Math.random()*4)];g.items.push({id:`drop-gem-${target.id}`,name,glyph:"*",kind:"gem",amount:value,x:target.x,y:target.y});drops.push(`${name} gem`)}pushLog(g, `The ${target.name} falls. +${target.xp} XP${drops.length?`; it drops ${drops.join(" and ")}.`:"; it carried no treasure."}`); }
     } else { g.player.x = nx; g.player.y = ny; }
     const item = g.items.find(i => i.x === g.player.x && i.y === g.player.y);
     if (item) {
       if (item.kind === "heal") { g.player.potions++; pushLog(g, "You pick up a healing potion."); }
       if (item.kind === "potion"||item.kind==="scroll") {addBag(g,{id:item.id,name:item.name,kind:item.kind,effect:item.effect||"",qty:1});pushLog(g,`You pick up a ${item.name}.`)}
       if (item.kind === "gold") { g.player.gold += item.amount; pushLog(g, `You collect ${item.amount} gold.`); }
+      if (item.kind === "gem") { g.gems++;g.gemValue+=item.amount;pushLog(g, `You collect a ${item.name} worth ${item.amount} gold.`); }
       if (item.kind === "cure") { g.player.hasCure = true; pushLog(g, "You found the Potion of Dianthroritis! Return upward."); }
       if (item.kind === "eye") { g.player.hasEye = true; pushLog(g, "You claim the legendary Eye of Larn."); }
       if (item.kind === "weapon" && item.amount > g.player.attack-2) { g.player.attack=2+item.amount; g.player.weapon=item.name; pushLog(g, `You wield the ${item.name}.`); }
@@ -152,11 +157,11 @@ export default function Home() {
     if (g.player.xp >= need) { g.player.level++; g.player.maxHp += 3+Math.floor(g.player.constitution/5); g.player.hp = g.player.maxHp; pushLog(g, `You become a ${RANKS[Math.min(g.player.level-1,RANKS.length-1)]}!`); }
     const tile=g.tiles[g.player.y][g.player.x];
     if (tile === ">" && g.floor < LAST_FLOOR) {
-      g.floors[g.floor]={tiles:g.tiles,monsters:g.monsters,items:g.items,features:g.features,stairs:g.stairs,up:g.up,start:{x:g.player.x,y:g.player.y}};
-      const n=g.floor+1,f=g.floors[n]??makeFloor(n);g.floors[n]=f;g.floor=n;g.tiles=f.tiles;g.monsters=f.monsters;g.items=f.items;g.features=f.features??[];g.stairs=f.stairs;g.up=f.up;Object.assign(g.player,f.up);pushLog(g, `You descend to ${g.floor<=10?`dungeon level ${g.floor}`:`volcanic level V${g.floor-10}`}.`);
+      g.floors[g.floor]={tiles:g.tiles,monsters:g.monsters,items:g.items,features:g.features,stairs:g.stairs,up:g.up,start:{x:g.player.x,y:g.player.y},explored:g.explored};
+      const n=g.floor+1,f=g.floors[n]??makeFloor(n);g.floors[n]=f;g.floor=n;g.tiles=f.tiles;g.monsters=f.monsters;g.items=f.items;g.features=f.features??[];g.stairs=f.stairs;g.up=f.up;g.explored=f.explored??blankExplored();Object.assign(g.player,f.up);revealAround(g.explored,g.player);pushLog(g, `You descend to ${g.floor<=10?`dungeon level ${g.floor}`:`volcanic level V${g.floor-10}`}.`);
     } else if (tile === "<" && g.floor > 0) {
-      g.floors[g.floor]={tiles:g.tiles,monsters:g.monsters,items:g.items,features:g.features,stairs:g.stairs,up:g.up,start:{x:g.player.x,y:g.player.y}};
-      const next=g.floor-1,f=g.floors[next]??(next===0?makeTown():makeFloor(next));g.floors[next]=f;g.floor=next;g.tiles=f.tiles;g.monsters=f.monsters;g.items=f.items;g.features=f.features??[];g.stairs=f.stairs;g.up=f.up;Object.assign(g.player,next===0?f.start:f.stairs);pushLog(g,next===0?"You emerge in the town of Larn.":`You climb to dungeon level ${next}.`);
+      g.floors[g.floor]={tiles:g.tiles,monsters:g.monsters,items:g.items,features:g.features,stairs:g.stairs,up:g.up,start:{x:g.player.x,y:g.player.y},explored:g.explored};
+      const next=g.floor-1,f=g.floors[next]??(next===0?makeTown():makeFloor(next));g.floors[next]=f;g.floor=next;g.tiles=f.tiles;g.monsters=f.monsters;g.items=f.items;g.features=f.features??[];g.stairs=f.stairs;g.up=f.up;g.explored=f.explored??(next===0?Array.from({length:H},()=>Array(W).fill(true)):blankExplored());Object.assign(g.player,next===0?f.start:f.stairs);revealAround(g.explored,g.player);pushLog(g,next===0?"You emerge in the town of Larn.":`You climb to dungeon level ${next}.`);
     } else if(g.floor===0){
       if(tile==="H"){g.player.hp=g.player.maxHp;pushLog(g,g.player.hasCure?"You return home with the cure. Your daughter will live!":"You rest at home and recover your health.");if(g.player.hasCure)g.status="won"}
       if(tile==="S")pushLog(g,"Welcome to the Larn Thrift Shoppe. Select an item to purchase.");
@@ -172,7 +177,7 @@ export default function Home() {
         for (const [mx,my] of options) { const tx=m.x+mx, ty=m.y+my; if ((mx||my) && g.tiles[ty]?.[tx] !== "#" && !(tx===g.player.x&&ty===g.player.y) && !g.monsters.some(o=>o.id!==m.id&&o.x===tx&&o.y===ty)) { m.x=tx; m.y=ty; break; } }
       }
     });
-    g.turn++;if(g.turn%8===0){g.player.hp=Math.min(g.player.maxHp,g.player.hp+1);g.player.mana=Math.min(g.player.maxMana,g.player.mana+1)}
+    revealAround(g.explored,g.player);if(g.awareness>0)g.awareness--;g.turn++;if(g.turn%8===0){g.player.hp=Math.min(g.player.maxHp,g.player.hp+1);g.player.mana=Math.min(g.player.maxMana,g.player.mana+1)}
     if (g.turn >= g.deadline) { g.status = "dead"; pushLog(g, "Time has run out. Your daughter could not be saved."); }
     else if (g.player.hp <= 0) { g.player.hp = 0; g.status = "dead"; pushLog(g, "You have fallen beneath Larn."); }
   }), [update]);
@@ -203,7 +208,7 @@ export default function Home() {
   }),[update]);
   const drink = useCallback(() => {const p=game.bag.find(x=>x.kind==="potion"&&x.effect==="healing");if(p)consumeItem(p.id);else update(g=>pushLog(g,"You have no healing potions."))}, [game.bag,consumeItem,update]);
   const escape = useCallback(() => update(g => { if (g.status !== "playing") return; if (!g.player.hasCure) return pushLog(g, "You cannot finish the quest without the cure."); pushLog(g, "Carry the cure back up through the dungeon to your home in Larn."); }), [update]);
-  const restoreGame=useCallback((old:Game)=>{const base=freshGame();const floors=old.floors??base.floors;Object.values(floors).forEach(f=>f.features??=[]);setGame({...base,...old,features:old.features??[],deadline:old.deadline??2500,floors,shopStock:old.shopStock??base.shopStock,player:{...base.player,...old.player,spells:old.player.spells??base.player.spells}})},[]);
+  const restoreGame=useCallback((old:Game)=>{const base=freshGame();const floors=old.floors??base.floors;Object.values(floors).forEach(f=>f.features??=[]);const explored=old.explored??(old.floor===0?Array.from({length:H},()=>Array(W).fill(true)):blankExplored());revealAround(explored,old.player);setGame({...base,...old,features:old.features??[],deadline:old.deadline??2500,floors,explored,gems:old.gems??0,gemValue:old.gemValue??0,shopStock:old.shopStock??base.shopStock,player:{...base.player,...old.player,spells:old.player.spells??base.player.spells}})},[]);
   useEffect(()=>{const raw=localStorage.getItem("jeremys-larn-saves");let saves:SavedGame[]=raw?JSON.parse(raw):[];const legacy=localStorage.getItem("jeremys-larn-save");if(legacy&&!localStorage.getItem("jeremys-larn-legacy-migrated")){saves.unshift({id:`legacy-${Date.now()}`,name:"Original save",savedAt:new Date().toISOString(),game:JSON.parse(legacy)});localStorage.setItem("jeremys-larn-legacy-migrated","1");localStorage.setItem("jeremys-larn-saves",JSON.stringify(saves))}setSavedGames(saves)},[]);
   const save = useCallback(() => {const name=saveName.trim()||`Adventure ${savedGames.length+1}`;const entry:SavedGame={id:`save-${Date.now()}`,name,savedAt:new Date().toISOString(),game};const next=[entry,...savedGames];localStorage.setItem("jeremys-larn-saves",JSON.stringify(next));setSavedGames(next);setSaveName("");update(g=>pushLog(g,`Saved as “${name}”.`));},[game,saveName,savedGames,update]);
   const load = useCallback((entry:SavedGame) => {restoreGame(entry.game);setService("none")},[restoreGame]);
@@ -253,7 +258,7 @@ export default function Home() {
       </aside>
       <section className="map-wrap">
         <div className="map" role="application" aria-label="Dungeon map">
-          {game.tiles.flatMap((row,y)=>row.map((tile,x)=>{ const e=entities.get(`${x},${y}`); const townNames:Record<string,string>={H:"Your home",S:"DND Store",C:"College of Larn",B:"Bank of Larn",T:"Trading Post",R:"Larn Revenue Service"};const featureNames:Record<string,string>={"^":"Trap","{":"Fountain","_":"Altar"}; return <span key={`${x}-${y}`} title={e?.title||townNames[tile]||featureNames[tile]} className={e?.kind || (tile==="#"?"wall":tile===">"||tile==="<"||tile==="Ω"?"stairs":featureNames[tile]?"feature":townNames[tile]?"town-place":"floor")}>{e?.glyph || (tile==="#"?"▓":tile)}</span>; }))}
+          {game.tiles.flatMap((row,y)=>row.map((tile,x)=>{const visible=game.floor===0||game.awareness>0||game.explored[y]?.[x];if(!visible)return <span key={`${x}-${y}`} className="unseen"> </span>; const e=entities.get(`${x},${y}`); const townNames:Record<string,string>={H:"Your home",S:"DND Store",C:"College of Larn",B:"Bank of Larn",T:"Trading Post",R:"Larn Revenue Service"};const featureNames:Record<string,string>={"^":"Trap","{":"Fountain","_":"Altar"}; return <span key={`${x}-${y}`} title={e?.title||townNames[tile]||featureNames[tile]} className={e?.kind || (tile==="#"?"wall":tile===">"||tile==="<"||tile==="Ω"?"stairs":featureNames[tile]?"feature":townNames[tile]?"town-place":"floor")}>{e?.glyph || (tile==="#"?"▓":tile)}</span>; }))}
         </div>
         {atStore&&<div className="shop-card"><div className="shop-head"><span>DND STORE · LARN THRIFT SHOPPE</span><strong>{game.player.gold} GP</strong></div><p>Original 12.3 stock and prices. Purchases equip automatically where appropriate.</p><div className="shop-list">{DND_STOCK.map((it,i)=><button key={it.name} disabled={!game.shopStock[i]||game.player.gold<it.price} onClick={()=>buy(it,i)}><span>{it.name}<small>{it.kind}</small></span><b>{it.price} gp</b><em>{game.shopStock[i]}</em></button>)}</div><small className="shop-exit">Move away from the S to leave the store.</small></div>}
         {service!=="none"&&<div className="shop-card"><div className="shop-head"><span>{service==="college"?"COLLEGE OF LARN":service==="bank"?"BANK OF LARN":service==="trade"?"TRADING POST":service==="inventory"?"YOUR INVENTORY":service==="saves"?"SAVED GAMES":"SPELL BOOK"}</span><button onClick={()=>setService("none")}>Close</button></div>
@@ -261,7 +266,7 @@ export default function Home() {
           {service==="bank"&&<div><p>Balance: {game.player.bank} gold. Cash: {game.player.gold} gold.</p><button onClick={()=>bankGold(true)}>Deposit 100</button> <button onClick={()=>bankGold(false)}>Withdraw 100</button></div>}
           {service==="trade"&&<div><p>Sell your currently equipped weapon and armor.</p><button onClick={sell}>Sell equipment</button></div>}
           {service==="spells"&&<div className="shop-list">{game.player.spells.map(code=>{const s=SPELLS.find(x=>x[0]===code)!;return <button key={code} onClick={()=>cast(code)}><span>{s[1]}<small>{code.toUpperCase()}</small></span><b>cast</b></button>})}</div>}
-          {service==="inventory"&&<div className="inventory-review"><p><b>Weapon:</b> {game.player.weapon} · attack {game.player.attack}</p><p><b>Armor:</b> {game.player.armorName} · protection {game.player.armor}</p><p><b>Quest items:</b> {game.player.hasEye?"Eye of Larn":"—"}{game.player.hasCure?", Potion of Dianthroritis":""}</p><h3>Pack</h3>{game.bag.length?game.bag.map(it=><button key={it.id} onClick={()=>consumeItem(it.id)}>{it.name} × {it.qty} — {it.kind==="potion"?"drink":"read"}</button>):<p>Your pack is empty.</p>}<h3>Known spells ({game.player.spells.length})</h3><p>{game.player.spells.map(code=>SPELLS.find(s=>s[0]===code)?.[1]).join(", ")}</p></div>}
+          {service==="inventory"&&<div className="inventory-review"><p><b>Weapon:</b> {game.player.weapon} · attack {game.player.attack}</p><p><b>Armor:</b> {game.player.armorName} · protection {game.player.armor}</p><p><b>Gems:</b> {game.gems} · appraised value {game.gemValue} gold</p><p><b>Quest items:</b> {game.player.hasEye?"Eye of Larn":"—"}{game.player.hasCure?", Potion of Dianthroritis":""}</p><h3>Pack</h3>{game.bag.length?game.bag.map(it=><button key={it.id} onClick={()=>consumeItem(it.id)}>{it.name} × {it.qty} — {it.kind==="potion"?"drink":"read"}</button>):<p>Your pack is empty.</p>}<h3>Known spells ({game.player.spells.length})</h3><p>{game.player.spells.map(code=>SPELLS.find(s=>s[0]===code)?.[1]).join(", ")}</p></div>}
           {service==="saves"&&<div className="save-manager"><div className="new-save"><input value={saveName} onChange={e=>setSaveName(e.target.value)} maxLength={32} placeholder={`Adventure ${savedGames.length+1}`} aria-label="Save name"/><button onClick={save}>Save current game</button></div>{savedGames.length===0?<p>No saved games yet.</p>:savedGames.map(s=><div className="save-row" key={s.id}><div><strong>{s.name}</strong><small>{new Date(s.savedAt).toLocaleString()} · Level {s.game.player.level} · {s.game.floor===0?"Town":s.game.floor<=10?`Dungeon ${s.game.floor}`:`Volcano V${s.game.floor-10}`} · {s.game.turn} turns</small></div><button onClick={()=>load(s)}>Load</button><button className="delete-save" onClick={()=>removeSave(s.id)}>Delete</button></div>)}</div>}
         </div>}
         {game.status!=="playing"&&<div className="end-card"><span>{game.status==="won"?"VICTORY":"THE DUNGEON CLAIMS YOU"}</span><h2>{game.status==="won"?"Larn is saved.":"Your quest has ended."}</h2><p>{game.status==="won"?`You recovered the cure in ${game.turn} turns with ${game.player.gold} gold.`:"Begin again. The dungeon will be different."}</p><button onClick={()=>setGame(freshGame())}>New adventure</button></div>}
