@@ -6,6 +6,7 @@ import { DND_STOCK, EXPERIENCE, POTIONS, RANKS, SCROLLS, SPELLS, type ShopItem }
 type Point = { x: number; y: number };
 type Item = { id: string; name: string; glyph: string; kind: "heal" | "gold" | "cure" | "eye" | "weapon" | "armor" | "potion" | "scroll" | "spellbook"; amount: number; effect?:string } & Point;
 type BagItem = { id:string; name:string; kind:"potion"|"scroll"|"misc"; effect:string; qty:number };
+type SavedGame = { id:string; name:string; savedAt:string; game:Game };
 type Monster = { id: string; name: string; glyph: string; hp: number; maxHp: number; attack: number; xp: number; gold: number } & Point;
 type Feature = Point & { id:string; kind:"trap"|"fountain"|"altar"; used:boolean };
 type Floor = { tiles: string[][]; monsters: Monster[]; items: Item[]; features:Feature[]; stairs: Point; up: Point; start: Point };
@@ -104,7 +105,9 @@ function addBag(g:Game,item:BagItem){const old=g.bag.find(x=>x.kind===item.kind&
 export default function Home() {
   const [game, setGame] = useState<Game>(() => freshGame());
   const [sound, setSound] = useState(false);
-  const [service,setService]=useState<"none"|"college"|"bank"|"trade"|"spells"|"inventory">("none");
+  const [service,setService]=useState<"none"|"college"|"bank"|"trade"|"spells"|"inventory"|"saves">("none");
+  const [savedGames,setSavedGames]=useState<SavedGame[]>([]);
+  const [saveName,setSaveName]=useState("");
 
   const update = useCallback((fn: (g: Game) => void) => setGame(prev => { const g = structuredClone(prev); fn(g); return g; }), []);
 
@@ -200,8 +203,11 @@ export default function Home() {
   }),[update]);
   const drink = useCallback(() => {const p=game.bag.find(x=>x.kind==="potion"&&x.effect==="healing");if(p)consumeItem(p.id);else update(g=>pushLog(g,"You have no healing potions."))}, [game.bag,consumeItem,update]);
   const escape = useCallback(() => update(g => { if (g.status !== "playing") return; if (!g.player.hasCure) return pushLog(g, "You cannot finish the quest without the cure."); pushLog(g, "Carry the cure back up through the dungeon to your home in Larn."); }), [update]);
-  const save = useCallback(() => { localStorage.setItem("jeremys-larn-save", JSON.stringify(game)); update(g => pushLog(g, "Game saved in this browser.")); }, [game, update]);
-  const load = useCallback(() => { const raw=localStorage.getItem("jeremys-larn-save"); if(raw){const old=JSON.parse(raw) as Game,base=freshGame();const floors=old.floors??base.floors;Object.values(floors).forEach(f=>f.features??=[]);setGame({...base,...old,features:old.features??[],deadline:old.deadline??2500,floors,shopStock:old.shopStock??base.shopStock,player:{...base.player,...old.player,spells:old.player.spells??base.player.spells}})} }, []);
+  const restoreGame=useCallback((old:Game)=>{const base=freshGame();const floors=old.floors??base.floors;Object.values(floors).forEach(f=>f.features??=[]);setGame({...base,...old,features:old.features??[],deadline:old.deadline??2500,floors,shopStock:old.shopStock??base.shopStock,player:{...base.player,...old.player,spells:old.player.spells??base.player.spells}})},[]);
+  useEffect(()=>{const raw=localStorage.getItem("jeremys-larn-saves");let saves:SavedGame[]=raw?JSON.parse(raw):[];const legacy=localStorage.getItem("jeremys-larn-save");if(legacy&&!localStorage.getItem("jeremys-larn-legacy-migrated")){saves.unshift({id:`legacy-${Date.now()}`,name:"Original save",savedAt:new Date().toISOString(),game:JSON.parse(legacy)});localStorage.setItem("jeremys-larn-legacy-migrated","1");localStorage.setItem("jeremys-larn-saves",JSON.stringify(saves))}setSavedGames(saves)},[]);
+  const save = useCallback(() => {const name=saveName.trim()||`Adventure ${savedGames.length+1}`;const entry:SavedGame={id:`save-${Date.now()}`,name,savedAt:new Date().toISOString(),game};const next=[entry,...savedGames];localStorage.setItem("jeremys-larn-saves",JSON.stringify(next));setSavedGames(next);setSaveName("");update(g=>pushLog(g,`Saved as “${name}”.`));},[game,saveName,savedGames,update]);
+  const load = useCallback((entry:SavedGame) => {restoreGame(entry.game);setService("none")},[restoreGame]);
+  const removeSave=useCallback((id:string)=>{const next=savedGames.filter(s=>s.id!==id);localStorage.setItem("jeremys-larn-saves",JSON.stringify(next));setSavedGames(next)},[savedGames]);
   const buy = useCallback((item:ShopItem,index:number)=>update(g=>{
     if(!g.shopStock[index])return pushLog(g,`${item.name} is sold out.`);
     if(g.player.gold<item.price)return pushLog(g,`You need ${item.price-g.player.gold} more gold.`);
@@ -233,7 +239,7 @@ export default function Home() {
   const atStore=game.floor===0&&game.tiles[game.player.y]?.[game.player.x]==="S";
 
   return <main className="game-shell">
-    <header><div><span className="eyebrow">A browser roguelike</span><h1>LARN <b>REBORN</b></h1></div><div className="header-actions"><button onClick={save}>Save</button><button onClick={load}>Load</button><button aria-label="Toggle sound" className={sound?"active":""} onClick={()=>setSound(!sound)}>♪</button></div></header>
+    <header><div><span className="eyebrow">A browser roguelike</span><h1>LARN <b>REBORN</b></h1></div><div className="header-actions"><button onClick={()=>setService("saves")}>Saved games</button><button aria-label="Toggle sound" className={sound?"active":""} onClick={()=>setSound(!sound)}>♪</button></div></header>
     <section className="layout">
       <aside className="panel stats">
         <h2>Adventurer</h2><div className="portrait">@</div>
@@ -250,12 +256,13 @@ export default function Home() {
           {game.tiles.flatMap((row,y)=>row.map((tile,x)=>{ const e=entities.get(`${x},${y}`); const townNames:Record<string,string>={H:"Your home",S:"DND Store",C:"College of Larn",B:"Bank of Larn",T:"Trading Post",R:"Larn Revenue Service"};const featureNames:Record<string,string>={"^":"Trap","{":"Fountain","_":"Altar"}; return <span key={`${x}-${y}`} title={e?.title||townNames[tile]||featureNames[tile]} className={e?.kind || (tile==="#"?"wall":tile===">"||tile==="<"||tile==="Ω"?"stairs":featureNames[tile]?"feature":townNames[tile]?"town-place":"floor")}>{e?.glyph || (tile==="#"?"▓":tile)}</span>; }))}
         </div>
         {atStore&&<div className="shop-card"><div className="shop-head"><span>DND STORE · LARN THRIFT SHOPPE</span><strong>{game.player.gold} GP</strong></div><p>Original 12.3 stock and prices. Purchases equip automatically where appropriate.</p><div className="shop-list">{DND_STOCK.map((it,i)=><button key={it.name} disabled={!game.shopStock[i]||game.player.gold<it.price} onClick={()=>buy(it,i)}><span>{it.name}<small>{it.kind}</small></span><b>{it.price} gp</b><em>{game.shopStock[i]}</em></button>)}</div><small className="shop-exit">Move away from the S to leave the store.</small></div>}
-        {service!=="none"&&<div className="shop-card"><div className="shop-head"><span>{service==="college"?"COLLEGE OF LARN":service==="bank"?"BANK OF LARN":service==="trade"?"TRADING POST":service==="inventory"?"YOUR INVENTORY":"SPELL BOOK"}</span><button onClick={()=>setService("none")}>Close</button></div>
+        {service!=="none"&&<div className="shop-card"><div className="shop-head"><span>{service==="college"?"COLLEGE OF LARN":service==="bank"?"BANK OF LARN":service==="trade"?"TRADING POST":service==="inventory"?"YOUR INVENTORY":service==="saves"?"SAVED GAMES":"SPELL BOOK"}</span><button onClick={()=>setService("none")}>Close</button></div>
           {service==="college"&&<div className="shop-list">{SPELLS.map((s,i)=>{const cost=50+(i+1)*35,known=game.player.spells.includes(s[0]);return <button key={s[0]} disabled={known||game.player.gold<cost} onClick={()=>learn(s[0],cost)}><span>{s[1]}<small>{s[0].toUpperCase()}</small></span><b>{cost} gp</b><em>{known?"✓":""}</em></button>})}</div>}
           {service==="bank"&&<div><p>Balance: {game.player.bank} gold. Cash: {game.player.gold} gold.</p><button onClick={()=>bankGold(true)}>Deposit 100</button> <button onClick={()=>bankGold(false)}>Withdraw 100</button></div>}
           {service==="trade"&&<div><p>Sell your currently equipped weapon and armor.</p><button onClick={sell}>Sell equipment</button></div>}
           {service==="spells"&&<div className="shop-list">{game.player.spells.map(code=>{const s=SPELLS.find(x=>x[0]===code)!;return <button key={code} onClick={()=>cast(code)}><span>{s[1]}<small>{code.toUpperCase()}</small></span><b>cast</b></button>})}</div>}
           {service==="inventory"&&<div className="inventory-review"><p><b>Weapon:</b> {game.player.weapon} · attack {game.player.attack}</p><p><b>Armor:</b> {game.player.armorName} · protection {game.player.armor}</p><p><b>Quest items:</b> {game.player.hasEye?"Eye of Larn":"—"}{game.player.hasCure?", Potion of Dianthroritis":""}</p><h3>Pack</h3>{game.bag.length?game.bag.map(it=><button key={it.id} onClick={()=>consumeItem(it.id)}>{it.name} × {it.qty} — {it.kind==="potion"?"drink":"read"}</button>):<p>Your pack is empty.</p>}<h3>Known spells ({game.player.spells.length})</h3><p>{game.player.spells.map(code=>SPELLS.find(s=>s[0]===code)?.[1]).join(", ")}</p></div>}
+          {service==="saves"&&<div className="save-manager"><div className="new-save"><input value={saveName} onChange={e=>setSaveName(e.target.value)} maxLength={32} placeholder={`Adventure ${savedGames.length+1}`} aria-label="Save name"/><button onClick={save}>Save current game</button></div>{savedGames.length===0?<p>No saved games yet.</p>:savedGames.map(s=><div className="save-row" key={s.id}><div><strong>{s.name}</strong><small>{new Date(s.savedAt).toLocaleString()} · Level {s.game.player.level} · {s.game.floor===0?"Town":s.game.floor<=10?`Dungeon ${s.game.floor}`:`Volcano V${s.game.floor-10}`} · {s.game.turn} turns</small></div><button onClick={()=>load(s)}>Load</button><button className="delete-save" onClick={()=>removeSave(s.id)}>Delete</button></div>)}</div>}
         </div>}
         {game.status!=="playing"&&<div className="end-card"><span>{game.status==="won"?"VICTORY":"THE DUNGEON CLAIMS YOU"}</span><h2>{game.status==="won"?"Larn is saved.":"Your quest has ended."}</h2><p>{game.status==="won"?`You recovered the cure in ${game.turn} turns with ${game.player.gold} gold.`:"Begin again. The dungeon will be different."}</p><button onClick={()=>setGame(freshGame())}>New adventure</button></div>}
         <div className="mobile-controls"><button onClick={()=>act(0,-1)}>↑</button><div><button onClick={()=>act(-1,0)}>←</button><button onClick={()=>act(0,1)}>↓</button><button onClick={()=>act(1,0)}>→</button></div></div>
