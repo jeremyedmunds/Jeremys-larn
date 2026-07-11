@@ -121,7 +121,7 @@ function pushLog(g: Game, text: string) { g.log = [text, ...g.log].slice(0, 8); 
 function safeBag(g:Game){if(!Array.isArray(g.bag))g.bag=[];g.bag=g.bag.filter(Boolean).map((i,index)=>({...i,id:i.id||`legacy-item-${index}`,name:i.name||"unknown item",kind:i.kind||"misc",effect:i.effect||"",qty:Number.isFinite(i.qty)&&i.qty>0?i.qty:1,weight:Number.isFinite(i.weight)&&i.weight>0?i.weight:undefined}));return g.bag}
 function addBag(g:Game,item:BagItem){const bag=safeBag(g),stackable=item.kind==="potion"||item.kind==="scroll",old=stackable?bag.find(x=>x.kind===item.kind&&x.effect===item.effect):undefined;if(old)old.qty=(Number.isFinite(old.qty)?old.qty:1)+item.qty;else bag.push(item)}
 function carriedWeight(g:Game){return safeBag(g).reduce((n,i)=>n+(Number.isFinite(i.weight)?i.weight!:(i.kind==="misc"?8:1))*(Number.isFinite(i.qty)?i.qty:1),0)}
-function carryCapacity(g:Game){return 12+Math.floor(g.player.strength/2)}
+function carryCapacity(g:Game){return 24+g.player.strength}
 
 export default function Home() {
   const [game, setGame] = useState<Game>(() => freshGame());
