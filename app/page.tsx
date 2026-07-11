@@ -8,12 +8,12 @@ type Item = { id: string; name: string; glyph: string; kind: "heal" | "gold" | "
 type BagItem = { id:string; name:string; kind:"potion"|"scroll"|"misc"; effect:string; qty:number };
 type SavedGame = { id:string; name:string; savedAt:string; game:Game };
 type Monster = { id: string; name: string; glyph: string; hp: number; maxHp: number; attack: number; xp: number; gold: number } & Point;
-type Feature = Point & { id:string; kind:"trap"|"fountain"|"altar"; used:boolean };
+type Feature = Point & { id:string; kind:"trap"|"fountain"|"altar"|"door"|"chest"|"statue"|"throne"|"pit"|"mirror"; used:boolean };
 type Floor = { tiles: string[][]; monsters: Monster[]; items: Item[]; features:Feature[]; stairs: Point; up: Point; start: Point; explored?:boolean[][] };
 type Game = {
   floor: number; tiles: string[][]; monsters: Monster[]; items: Item[]; features:Feature[]; stairs: Point; up: Point;
   player: Point & { hp: number; maxHp: number; mana:number; maxMana:number; attack: number; armor: number; strength:number; intelligence:number; wisdom:number; constitution:number; dexterity:number; charisma:number; level: number; xp: number; gold: number; bank: number; potions: number; hasEye: boolean; hasCure: boolean; weapon: string; armorName: string; spells:string[] };
-  turn: number; deadline:number; status: "playing" | "won" | "dead"; log: string[]; shopStock:number[]; bag:BagItem[]; awareness:number; explored:boolean[][]; gems:number; gemValue:number; floors:Record<number,Floor>;
+  turn: number; deadline:number; status: "playing" | "won" | "dead"; log: string[]; shopStock:number[]; bag:BagItem[]; awareness:number; explored:boolean[][]; gems:number; gemValue:number; monsterHold:number; haste:number; fireResist:number; stealth:number; lifeProtection:number; floors:Record<number,Floor>;
 };
 
 const W = 41, H = 23, LAST_FLOOR = 13;
@@ -83,6 +83,9 @@ function makeFloor(level: number, seed = Date.now()): Floor {
   for(let i=0;i<Math.min(3,Math.ceil(level/3));i++){const p=spot();features.push({id:`trap-${level}-${i}-${seed}`,kind:"trap",used:false,...p});tiles[p.y][p.x]="^"}
   if(level>1&&r()>.35){const p=spot();features.push({id:`fountain-${level}-${seed}`,kind:"fountain",used:false,...p});tiles[p.y][p.x]="{"}
   if(level>2&&r()>.5){const p=spot();features.push({id:`altar-${level}-${seed}`,kind:"altar",used:false,...p});tiles[p.y][p.x]="_"}
+  const specialKinds=["chest","statue","throne","pit","mirror"] as const;
+  for(let i=0;i<2+Math.floor(level/3);i++){const kind=specialKinds[Math.floor(r()*specialKinds.length)],p=spot();features.push({id:`${kind}-${level}-${i}-${seed}`,kind,used:false,...p});tiles[p.y][p.x]=kind==="chest"?"C":kind==="statue"?"&":kind==="throne"?"T":kind==="pit"?"P":"M"}
+  for(let i=1;i<rooms.length;i++){if(r()<.55){const p={x:rooms[i].cx,y:rooms[i].cy};if(!occupied.has(`${p.x},${p.y}`)){features.push({id:`door-${level}-${i}-${seed}`,kind:"door",used:false,...p});tiles[p.y][p.x]="+"}}}
   return { tiles, monsters, items, features, stairs, up, start };
 }
 
@@ -100,7 +103,7 @@ function freshGame(): Game {
   const explored=Array.from({length:H},()=>Array(W).fill(true));f.explored=explored;
   return { floor: 0, tiles: f.tiles, monsters: f.monsters, items: f.items, features:f.features, stairs: f.stairs, up:f.up,
     player: { ...f.start, hp: 20, maxHp: 20, mana:12,maxMana:12, attack: 2, armor:0, strength:12,intelligence:12,wisdom:12,constitution:12,dexterity:12,charisma:12,level: 1, xp: 0, gold: 250, bank:0, potions: 1, hasEye:false, hasCure: false, weapon:"none", armorName:"clothes",spells:["pro","mle"] },
-    turn: 0, deadline:2500,status: "playing", shopStock:DND_STOCK.map(x=>x.stock), bag:[{id:"start-heal",name:"potion of healing",kind:"potion",effect:"healing",qty:1}],awareness:0,explored,gems:0,gemValue:0,floors:{0:f}, log: ["Welcome to the town of Larn.", "Your daughter is dying of dianthroritis. Find the cure in the volcanic depths."] };
+    turn: 0, deadline:2500,status: "playing", shopStock:DND_STOCK.map(x=>x.stock), bag:[{id:"start-heal",name:"potion of healing",kind:"potion",effect:"healing",qty:1}],awareness:0,explored,gems:0,gemValue:0,monsterHold:0,haste:0,fireResist:0,stealth:0,lifeProtection:0,floors:{0:f}, log: ["Welcome to the town of Larn.", "Your daughter is dying of dianthroritis. Find the cure in the volcanic depths."] };
 }
 
 function pushLog(g: Game, text: string) { g.log = [text, ...g.log].slice(0, 8); }
@@ -152,6 +155,18 @@ export default function Home() {
       feature.used=true;g.tiles[feature.y][feature.x]=".";
       if(g.player.gold>=50){g.player.gold-=50;g.player.wisdom++;g.player.maxMana+=2;g.player.mana=g.player.maxMana;pushLog(g,"You offer 50 gold. The altar grants wisdom.")}
       else pushLog(g,"The silent altar demands an offering you cannot afford.");
+    } else if(feature?.kind==="door"){
+      feature.used=true;g.tiles[feature.y][feature.x]=".";pushLog(g,"You open the heavy dungeon door.");
+    } else if(feature?.kind==="chest"){
+      feature.used=true;g.tiles[feature.y][feature.x]=".";const roll=Math.random();if(roll<.18){const dmg=5+g.floor;g.player.hp-=dmg;pushLog(g,`The chest explodes for ${dmg} damage!`)}else {const gold=25+g.floor*12+Math.floor(Math.random()*80);g.player.gold+=gold;pushLog(g,`You open the chest and find ${gold} gold.`);if(Math.random()<.45){g.gems++;const value=50+g.floor*20;g.gemValue+=value;pushLog(g,`A cut gem inside is worth ${value} gold.`)}}
+    } else if(feature?.kind==="statue"){
+      feature.used=true;g.tiles[feature.y][feature.x]=".";if(Math.random()<.55){const choices=SPELLS.filter(s=>!g.player.spells.includes(s[0]));const spell=choices[Math.floor(Math.random()*choices.length)];if(spell){g.player.spells.push(spell[0]);pushLog(g,`The statue crumbles, revealing a book of ${spell[1]}.`)}}else pushLog(g,"The statue crumbles into worthless dust.");
+    } else if(feature?.kind==="throne"){
+      feature.used=true;const roll=Math.random();if(roll<.25){const n=1+Math.floor(Math.random()*3),value=n*(60+g.floor*15);g.gems+=n;g.gemValue+=value;pushLog(g,`You pry ${n} gems from the throne, worth ${value} gold.`)}else if(roll<.4){const hp=90+g.floor*4;g.monsters.push({id:`king-${g.turn}`,name:"gnome king",glyph:"K",hp,maxHp:hp,attack:10,xp:3000,gold:2000,x:feature.x,y:Math.max(1,feature.y-1)});pushLog(g,"A gnome king appears to defend the throne!")}else pushLog(g,"The throne yields nothing.");
+    } else if(feature?.kind==="pit"){
+      feature.used=true;if(Math.random()*20>g.player.dexterity){const dmg=3+g.floor;g.player.hp-=dmg;pushLog(g,`You fall into a pit and take ${dmg} damage.`)}else pushLog(g,"You balance at the edge of a pit and escape.");
+    } else if(feature?.kind==="mirror"){
+      pushLog(g,"A dark mirror shimmers. Projectile magic may reflect here.");
     }
     const need = EXPERIENCE[Math.min(g.player.level,EXPERIENCE.length-1)];
     if (g.player.xp >= need) { g.player.level++; g.player.maxHp += 3+Math.floor(g.player.constitution/5); g.player.hp = g.player.maxHp; pushLog(g, `You become a ${RANKS[Math.min(g.player.level-1,RANKS.length-1)]}!`); }
@@ -170,14 +185,14 @@ export default function Home() {
       if(tile==="T"){pushLog(g,"Trading Post: fair prices for used equipment.");setService("trade")}
       if(tile==="R")pushLog(g,"Larn Revenue Service: taxes are inevitable.");
     }
-    g.monsters.forEach(m => {
+    if(g.monsterHold<=0)g.monsters.forEach(m => {
       if (distance(m, g.player) === 1) { const dmg = Math.max(1, m.attack + Math.floor(Math.random() * 3) - 1-g.player.armor); g.player.hp -= dmg; pushLog(g, `The ${m.name} hits you for ${dmg}.`); }
       else if (distance(m, g.player) < 8 && Math.random() < .65) {
         const sx = Math.sign(g.player.x - m.x), sy = Math.sign(g.player.y - m.y); const options = Math.random() > .5 ? [[sx,0],[0,sy]] : [[0,sy],[sx,0]];
         for (const [mx,my] of options) { const tx=m.x+mx, ty=m.y+my; if ((mx||my) && g.tiles[ty]?.[tx] !== "#" && !(tx===g.player.x&&ty===g.player.y) && !g.monsters.some(o=>o.id!==m.id&&o.x===tx&&o.y===ty)) { m.x=tx; m.y=ty; break; } }
       }
     });
-    revealAround(g.explored,g.player);if(g.awareness>0)g.awareness--;g.turn++;if(g.turn%8===0){g.player.hp=Math.min(g.player.maxHp,g.player.hp+1);g.player.mana=Math.min(g.player.maxMana,g.player.mana+1)}
+    revealAround(g.explored,g.player);if(g.awareness>0)g.awareness--;if(g.monsterHold>0)g.monsterHold--;if(g.haste>0)g.haste--;if(g.fireResist>0)g.fireResist--;if(g.stealth>0)g.stealth--;if(g.lifeProtection>0)g.lifeProtection--;g.turn+=g.haste>0?.5:1;if(Math.floor(g.turn)%8===0){g.player.hp=Math.min(g.player.maxHp,g.player.hp+1);g.player.mana=Math.min(g.player.maxMana,g.player.mana+1)}
     if (g.turn >= g.deadline) { g.status = "dead"; pushLog(g, "Time has run out. Your daughter could not be saved."); }
     else if (g.player.hp <= 0) { g.player.hp = 0; g.status = "dead"; pushLog(g, "You have fallen beneath Larn."); }
   }), [update]);
@@ -193,7 +208,13 @@ export default function Home() {
       else if(effect==="poison"){g.player.hp=Math.max(1,g.player.hp-10);pushLog(g,"The potion was poison!")}
       else if(effect==="heroism"){g.player.attack+=2;pushLog(g,"You feel heroic.")}
       else if(effect==="sturdiness"){g.player.maxHp+=5;g.player.hp+=5}
-      else if(effect==="object detection"||effect==="monster detection")g.awareness=40;
+      else if(effect==="object detection"||effect==="monster detection"||effect==="treasure finding")g.awareness=40;
+      else if(effect==="fire resistance"){g.fireResist=80;pushLog(g,"Flames can scarcely touch you.")}
+      else if(effect==="learning"){g.player.intelligence+=2;g.player.maxMana+=3}
+      else if(effect==="blindness"){g.awareness=0;g.explored=blankExplored();revealAround(g.explored,g.player,1)}
+      else if(effect==="confusion"||effect==="dizziness"){g.player.dexterity=Math.max(3,g.player.dexterity-1)}
+      else if(effect==="forgetfulness"){g.player.spells=g.player.spells.slice(0,Math.max(2,g.player.spells.length-1))}
+      else if(effect==="see invisible"){g.awareness=80;pushLog(g,"Invisible things become clear.")}
       else pushLog(g,`You drink the potion of ${effect}.`);
     } else {
       if(effect==="enchant weapon")g.player.attack++;
@@ -201,7 +222,18 @@ export default function Home() {
       else if(effect==="enlightenment"||effect==="magic mapping"||effect==="expanded awareness")g.awareness=100;
       else if(effect==="teleportation"){const cells=[] as Point[];for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++)if(g.tiles[y][x]!=="#")cells.push({x,y});Object.assign(g.player,cells[Math.floor(Math.random()*cells.length)])}
       else if(effect==="annihilation"){g.monsters=[];pushLog(g,"Every monster on the level is annihilated.")}
-      else if(effect==="hold monsters"){g.awareness=25;pushLog(g,"The monsters are held motionless.")}
+      else if(effect==="hold monsters"){g.monsterHold=25;pushLog(g,"The monsters are held motionless.")}
+      else if(effect==="create monster"){const p={x:Math.min(W-2,g.player.x+1),y:g.player.y};g.monsters.push({id:`created-${g.turn}`,name:"hobgoblin",glyph:"H",hp:8,maxHp:8,attack:3,xp:10,gold:15,...p});pushLog(g,"A monster materializes!")}
+      else if(effect==="gem perfection"){g.gemValue=Math.ceil(g.gemValue*1.5);pushLog(g,"Every carried gem becomes flawless.")}
+      else if(effect==="haste monsters"){g.monsterHold=0;g.player.hp=Math.max(1,g.player.hp-2);pushLog(g,"The monsters surge with unnatural speed.")}
+      else if(effect==="monster healing"){g.monsters.forEach(m=>m.hp=m.maxHp);pushLog(g,"Every monster is fully healed.")}
+      else if(effect==="stealth"){g.stealth=80;pushLog(g,"Your footsteps become silent.")}
+      else if(effect==="life protection"){g.lifeProtection=100;pushLog(g,"A ward protects your life force.")}
+      else if(effect==="time warp"){g.turn=Math.max(0,g.turn-100);pushLog(g,"Time bends backward by 100 turns.")}
+      else if(effect==="spell extension"){g.monsterHold*=2;g.fireResist*=2;g.stealth*=2}
+      else if(effect==="identify"){g.awareness=100;pushLog(g,"All nearby objects reveal their true nature.")}
+      else if(effect==="pulverization"){g.features.filter(f=>["statue","door","mirror"].includes(f.kind)).forEach(f=>{f.used=true;g.tiles[f.y][f.x]="."});pushLog(g,"Stone, doors, and mirrors shatter across the level.")}
+      else if(effect==="create artifact"){g.player.attack+=3;g.player.weapon="conjured artifact blade";pushLog(g,"An artifact blade forms in your hand.")}
       else pushLog(g,`You read the scroll of ${effect}.`);
     }
     item.qty--;if(item.qty<=0)g.bag=g.bag.filter(x=>x.id!==id);g.turn++;
@@ -225,12 +257,13 @@ export default function Home() {
 
   const cast=useCallback((code:string)=>update(g=>{const s=SPELLS.find(x=>x[0]===code);if(!s)return;const tier=Math.floor(SPELLS.findIndex(x=>x[0]===code)/4)+1;if(g.player.mana<tier)return pushLog(g,"You lack the spell points.");g.player.mana-=tier;
     if(code==="hel")g.player.hp=Math.min(g.player.maxHp,g.player.hp+12+g.player.wisdom);
-    else if(["mle","ssp","bal","cld","lit","mfi","fgr"].includes(code)){const target=[...g.monsters].sort((a,b)=>distance(a,g.player)-distance(b,g.player))[0];if(target){const dmg=tier*6+g.player.intelligence;target.hp-=dmg;pushLog(g,`${s[1]} hits the ${target.name} for ${dmg}.`);if(target.hp<=0){g.player.xp+=target.xp;g.player.gold+=target.gold;g.monsters=g.monsters.filter(m=>m.id!==target.id)}}}
-    else if(["hld","stp","sle","web"].includes(code))g.awareness=30;
-    else if(code==="gen"||code==="sph")g.monsters=[];
+    else if(["mle","ssp","bal","cld","lit","mfi","fgr"].includes(code)){const mirror=g.features.some(f=>f.kind==="mirror"&&!f.used);if(mirror&&Math.random()<.3){const reflected=Math.max(1,tier*4-Math.floor(g.player.armor/2));g.player.hp-=reflected;pushLog(g,`A mirror reflects ${s[1]} back for ${reflected} damage!`)}else{const target=[...g.monsters].sort((a,b)=>distance(a,g.player)-distance(b,g.player))[0];if(target){let dmg=tier*6+g.player.intelligence;if(code==="mfi"&&g.fireResist>0)dmg=Math.ceil(dmg*.8);target.hp-=dmg;pushLog(g,`${s[1]} hits the ${target.name} for ${dmg}.`);if(target.hp<=0){g.player.xp+=target.xp;g.monsters=g.monsters.filter(m=>m.id!==target.id);if(target.gold)g.items.push({id:`spell-drop-${target.id}`,name:"monster gold",glyph:"$",kind:"gold",amount:target.gold,x:target.x,y:target.y});pushLog(g,`The ${target.name} dies${target.gold?` and drops ${target.gold} gold.`:"."}`)}}}}
+    else if(["hld","stp","sle","web"].includes(code)){g.monsterHold=20+tier*5;pushLog(g,"The monsters freeze in place.")}
+    else if(code==="gen"){const p={x:Math.min(W-2,g.player.x+1),y:g.player.y};g.monsters.push({id:`gen-${g.turn}`,name:"summoned orc",glyph:"O",hp:12,maxHp:12,attack:4,xp:30,gold:25,...p})}
+    else if(code==="sph")g.monsters=[];
     else if(code==="tel")Object.assign(g.player,g.up);
     else if(code==="pro"||code==="glo")g.player.armor+=tier;
-    else if(code==="str")g.player.strength+=2;else if(code==="dex")g.player.dexterity+=2;else if(code==="enl")g.awareness=100;
+    else if(code==="str")g.player.strength+=2;else if(code==="dex")g.player.dexterity+=2;else if(code==="enl")g.awareness=100;else if(code==="cbl"){g.awareness=30;revealAround(g.explored,g.player)}else if(code==="chm"){const m=g.monsters.sort((a,b)=>distance(a,g.player)-distance(b,g.player))[0];if(m){g.monsters=g.monsters.filter(x=>x.id!==m.id);pushLog(g,`The ${m.name} is charmed and leaves peacefully.`)}}else if(code==="sca"){g.monsters.forEach(m=>{m.x=Math.max(1,Math.min(W-2,m.x+Math.sign(m.x-g.player.x)*2));m.y=Math.max(1,Math.min(H-2,m.y+Math.sign(m.y-g.player.y)*2))})}
     pushLog(g,`You cast ${s[1]}.`);g.turn++;
   }),[update]);
   const learn=useCallback((code:string,cost:number)=>update(g=>{if(g.player.spells.includes(code))return;if(g.player.gold<cost)return pushLog(g,"You cannot afford that course.");g.player.gold-=cost;g.player.spells.push(code);pushLog(g,`You learn ${code.toUpperCase()}.`)}),[update]);
@@ -258,7 +291,7 @@ export default function Home() {
       </aside>
       <section className="map-wrap">
         <div className="map" role="application" aria-label="Dungeon map">
-          {game.tiles.flatMap((row,y)=>row.map((tile,x)=>{const visible=game.floor===0||game.awareness>0||game.explored[y]?.[x];if(!visible)return <span key={`${x}-${y}`} className="unseen"> </span>; const e=entities.get(`${x},${y}`); const townNames:Record<string,string>={H:"Your home",S:"DND Store",C:"College of Larn",B:"Bank of Larn",T:"Trading Post",R:"Larn Revenue Service"};const featureNames:Record<string,string>={"^":"Trap","{":"Fountain","_":"Altar"}; return <span key={`${x}-${y}`} title={e?.title||townNames[tile]||featureNames[tile]} className={e?.kind || (tile==="#"?"wall":tile===">"||tile==="<"||tile==="Ω"?"stairs":featureNames[tile]?"feature":townNames[tile]?"town-place":"floor")}>{e?.glyph || (tile==="#"?"▓":tile)}</span>; }))}
+          {game.tiles.flatMap((row,y)=>row.map((tile,x)=>{const visible=game.floor===0||game.awareness>0||game.explored[y]?.[x];if(!visible)return <span key={`${x}-${y}`} className="unseen"> </span>; const e=entities.get(`${x},${y}`); const townNames:Record<string,string>={H:"Your home",S:"DND Store",C:"College of Larn",B:"Bank of Larn",T:"Trading Post",R:"Larn Revenue Service"};const featureNames:Record<string,string>={"^":"Trap","{":"Fountain","_":"Altar","+":"Door","C":"Chest","&":"Statue","T":"Throne","P":"Pit","M":"Mirror"}; return <span key={`${x}-${y}`} title={e?.title||townNames[tile]||featureNames[tile]} className={e?.kind || (tile==="#"?"wall":tile===">"||tile==="<"||tile==="Ω"?"stairs":featureNames[tile]?"feature":townNames[tile]?"town-place":"floor")}>{e?.glyph || (tile==="#"?"▓":tile)}</span>; }))}
         </div>
         {atStore&&<div className="shop-card"><div className="shop-head"><span>DND STORE · LARN THRIFT SHOPPE</span><strong>{game.player.gold} GP</strong></div><p>Original 12.3 stock and prices. Purchases equip automatically where appropriate.</p><div className="shop-list">{DND_STOCK.map((it,i)=><button key={it.name} disabled={!game.shopStock[i]||game.player.gold<it.price} onClick={()=>buy(it,i)}><span>{it.name}<small>{it.kind}</small></span><b>{it.price} gp</b><em>{game.shopStock[i]}</em></button>)}</div><small className="shop-exit">Move away from the S to leave the store.</small></div>}
         {service!=="none"&&<div className="shop-card"><div className="shop-head"><span>{service==="college"?"COLLEGE OF LARN":service==="bank"?"BANK OF LARN":service==="trade"?"TRADING POST":service==="inventory"?"YOUR INVENTORY":service==="saves"?"SAVED GAMES":"SPELL BOOK"}</span><button onClick={()=>setService("none")}>Close</button></div>
