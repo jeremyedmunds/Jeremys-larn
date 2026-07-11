@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { DND_STOCK, EXPERIENCE, POTIONS, RANKS, SCROLLS, SPELLS, type ShopItem } from "./larn-data";
 
 type Point = { x: number; y: number };
-type Item = { id: string; name: string; glyph: string; kind: "heal" | "gold" | "cure" | "eye" | "weapon" | "armor" | "potion" | "scroll"; amount: number; effect?:string } & Point;
+type Item = { id: string; name: string; glyph: string; kind: "heal" | "gold" | "cure" | "eye" | "weapon" | "armor" | "potion" | "scroll" | "spellbook"; amount: number; effect?:string } & Point;
 type BagItem = { id:string; name:string; kind:"potion"|"scroll"|"misc"; effect:string; qty:number };
 type Monster = { id: string; name: string; glyph: string; hp: number; maxHp: number; attack: number; xp: number; gold: number } & Point;
 type Feature = Point & { id:string; kind:"trap"|"fountain"|"altar"; used:boolean };
@@ -58,8 +58,11 @@ function makeFloor(level: number, seed = Date.now()): Floor {
   const occupied = new Set([`${start.x},${start.y}`, `${stairs.x},${stairs.y}`]);
   const spot = () => { let p: Point; do { const q = rooms[1 + Math.floor(r() * (rooms.length - 1))]; p = { x: q.x + Math.floor(r() * q.w), y: q.y + Math.floor(r() * q.h) }; } while (occupied.has(`${p.x},${p.y}`)); occupied.add(`${p.x},${p.y}`); return p; };
   const monsters: Monster[] = [];
+  const recentTiers:number[]=[];
   for (let i = 0; i < 4 + level; i++) {
-    const p = spot(), tier = Math.min(monsterTypes.length - 1, Math.max(0, level - 1 + (r() > .72 ? 1 : 0))), m = monsterTypes[tier];
+    const p = spot();let tier=0;
+    for(let pick=0;pick<8;pick++){const swing=Math.floor(r()*5)-2;const candidate=Math.min(monsterTypes.length-1,Math.max(0,level-1+swing));if(recentTiers.filter(x=>x===candidate).length<2||pick===7){tier=candidate;break}}
+    recentTiers.push(tier);if(recentTiers.length>5)recentTiers.shift();const m = monsterTypes[tier];
     const hp = m[2] + Math.floor(r() * 4);
     monsters.push({ id: `m${level}-${i}-${seed}`, name: m[0], glyph: m[1], hp, maxHp: hp, attack: m[3], xp: m[4], gold: m[5], ...p });
   }
@@ -67,6 +70,7 @@ function makeFloor(level: number, seed = Date.now()): Floor {
   for (let i = 0; i < 3; i++) {const effect=POTIONS[Math.floor(r()*Math.min(POTIONS.length,8+level))];items.push({ id: `p${level}-${i}-${seed}`, name: `potion of ${effect}`, glyph: "!", kind: "potion", effect, amount: 1, ...spot() });}
   for (let i = 0; i < 3; i++) {const effect=SCROLLS[Math.floor(r()*Math.min(SCROLLS.length,8+level))];items.push({ id: `s${level}-${i}-${seed}`, name: `scroll of ${effect}`, glyph: "?", kind: "scroll", effect, amount: 1, ...spot() });}
   for (let i = 0; i < 3; i++) items.push({ id: `c${level}-${i}-${seed}`, name: "gold", glyph: "$", kind: "gold", amount: 3 + Math.floor(r() * 10), ...spot() });
+  if(r()<.38){const choices=SPELLS.slice(2,Math.min(SPELLS.length,8+level*2));const spell=choices[Math.floor(r()*choices.length)];items.push({id:`book-${level}-${seed}`,name:`spellbook: ${spell[1]}`,glyph:"+",kind:"spellbook",effect:spell[0],amount:1,...spot()})}
   if (level > 1 && r() > .45) items.push({ id:`w${level}-${seed}`, name: level > 6 ? "longsword" : "spear", glyph:")", kind:"weapon", amount: level > 6 ? 3 : 1, ...spot() });
   if (level > 2 && r() > .5) items.push({ id:`a${level}-${seed}`, name: level > 7 ? "plate armor" : "ring mail", glyph:"[", kind:"armor", amount: level > 7 ? 4 : 2, ...spot() });
   if (level === 10) items.push({ id:`eye-${seed}`, name:"The Eye of Larn", glyph:"~", kind:"eye", amount:1, x:stairs.x, y:stairs.y });
@@ -100,7 +104,7 @@ function addBag(g:Game,item:BagItem){const old=g.bag.find(x=>x.kind===item.kind&
 export default function Home() {
   const [game, setGame] = useState<Game>(() => freshGame());
   const [sound, setSound] = useState(false);
-  const [service,setService]=useState<"none"|"college"|"bank"|"trade"|"spells">("none");
+  const [service,setService]=useState<"none"|"college"|"bank"|"trade"|"spells"|"inventory">("none");
 
   const update = useCallback((fn: (g: Game) => void) => setGame(prev => { const g = structuredClone(prev); fn(g); return g; }), []);
 
@@ -122,6 +126,7 @@ export default function Home() {
       if (item.kind === "eye") { g.player.hasEye = true; pushLog(g, "You claim the legendary Eye of Larn."); }
       if (item.kind === "weapon" && item.amount > g.player.attack-2) { g.player.attack=2+item.amount; g.player.weapon=item.name; pushLog(g, `You wield the ${item.name}.`); }
       if (item.kind === "armor" && item.amount > g.player.armor) { g.player.armor=item.amount; g.player.armorName=item.name; pushLog(g, `You equip the ${item.name}.`); }
+      if(item.kind==="spellbook"&&item.effect){if(g.player.spells.includes(item.effect))pushLog(g,`The ${item.name} contains nothing new.`);else {g.player.spells.push(item.effect);pushLog(g,`You study the ${item.name} and learn a new spell!`)}}
       g.items = g.items.filter(i => i.id !== item.id);
     }
     const feature=g.features.find(f=>f.x===g.player.x&&f.y===g.player.y&&!f.used);
@@ -221,7 +226,7 @@ export default function Home() {
   const bankGold=useCallback((deposit:boolean)=>update(g=>{const n=Math.min(100,deposit?g.player.gold:g.player.bank);if(deposit){g.player.gold-=n;g.player.bank+=n}else{g.player.bank-=n;g.player.gold+=n}pushLog(g,`${deposit?"Deposited":"Withdrew"} ${n} gold.`)}),[update]);
   const sell=useCallback(()=>update(g=>{if(g.player.weapon==="none"&&g.player.armorName==="clothes")return pushLog(g,"You have nothing equipped to sell.");const n=Math.max(10,(g.player.attack+g.player.armor)*20);g.player.gold+=n;g.player.weapon="none";g.player.armorName="clothes";g.player.attack=2;g.player.armor=0;pushLog(g,`Equipment sold for ${n} gold.`)}),[update]);
 
-  useEffect(() => { const onKey=(e:KeyboardEvent) => { if (dirs[e.key]) { e.preventDefault();setService("none");act(dirs[e.key].x, dirs[e.key].y); } if (e.key.toLowerCase()==="q") drink();if(e.key.toLowerCase()==="c")setService("spells"); if (e.key.toLowerCase()==="e") escape(); }; window.addEventListener("keydown",onKey); return()=>window.removeEventListener("keydown",onKey); }, [act,drink,escape]);
+  useEffect(() => { const onKey=(e:KeyboardEvent) => { if (dirs[e.key]) { e.preventDefault();setService("none");act(dirs[e.key].x, dirs[e.key].y); } if (e.key.toLowerCase()==="q") drink();if(e.key.toLowerCase()==="c")setService("spells");if(e.key.toLowerCase()==="i")setService("inventory"); if (e.key.toLowerCase()==="e") escape(); }; window.addEventListener("keydown",onKey); return()=>window.removeEventListener("keydown",onKey); }, [act,drink,escape]);
 
   const entities = useMemo(() => { const map=new Map<string,{glyph:string;kind:string;title:string}>(); game.items.forEach(i=>map.set(`${i.x},${i.y}`,{glyph:i.glyph,kind:`item ${i.kind}`,title:i.name})); game.monsters.forEach(m=>map.set(`${m.x},${m.y}`,{glyph:m.glyph,kind:"monster",title:`${m.name} (${m.hp}/${m.maxHp})`})); map.set(`${game.player.x},${game.player.y}`,{glyph:"@",kind:"player",title:"You"}); return map; },[game]);
   const nextXp=EXPERIENCE[Math.min(game.player.level,EXPERIENCE.length-1)],hpPct = 100*game.player.hp/game.player.maxHp, xpPct=100*game.player.xp/nextXp;
@@ -245,11 +250,12 @@ export default function Home() {
           {game.tiles.flatMap((row,y)=>row.map((tile,x)=>{ const e=entities.get(`${x},${y}`); const townNames:Record<string,string>={H:"Your home",S:"DND Store",C:"College of Larn",B:"Bank of Larn",T:"Trading Post",R:"Larn Revenue Service"};const featureNames:Record<string,string>={"^":"Trap","{":"Fountain","_":"Altar"}; return <span key={`${x}-${y}`} title={e?.title||townNames[tile]||featureNames[tile]} className={e?.kind || (tile==="#"?"wall":tile===">"||tile==="<"||tile==="Ω"?"stairs":featureNames[tile]?"feature":townNames[tile]?"town-place":"floor")}>{e?.glyph || (tile==="#"?"▓":tile)}</span>; }))}
         </div>
         {atStore&&<div className="shop-card"><div className="shop-head"><span>DND STORE · LARN THRIFT SHOPPE</span><strong>{game.player.gold} GP</strong></div><p>Original 12.3 stock and prices. Purchases equip automatically where appropriate.</p><div className="shop-list">{DND_STOCK.map((it,i)=><button key={it.name} disabled={!game.shopStock[i]||game.player.gold<it.price} onClick={()=>buy(it,i)}><span>{it.name}<small>{it.kind}</small></span><b>{it.price} gp</b><em>{game.shopStock[i]}</em></button>)}</div><small className="shop-exit">Move away from the S to leave the store.</small></div>}
-        {service!=="none"&&<div className="shop-card"><div className="shop-head"><span>{service==="college"?"COLLEGE OF LARN":service==="bank"?"BANK OF LARN":service==="trade"?"TRADING POST":"SPELL BOOK"}</span><button onClick={()=>setService("none")}>Close</button></div>
+        {service!=="none"&&<div className="shop-card"><div className="shop-head"><span>{service==="college"?"COLLEGE OF LARN":service==="bank"?"BANK OF LARN":service==="trade"?"TRADING POST":service==="inventory"?"YOUR INVENTORY":"SPELL BOOK"}</span><button onClick={()=>setService("none")}>Close</button></div>
           {service==="college"&&<div className="shop-list">{SPELLS.map((s,i)=>{const cost=50+(i+1)*35,known=game.player.spells.includes(s[0]);return <button key={s[0]} disabled={known||game.player.gold<cost} onClick={()=>learn(s[0],cost)}><span>{s[1]}<small>{s[0].toUpperCase()}</small></span><b>{cost} gp</b><em>{known?"✓":""}</em></button>})}</div>}
           {service==="bank"&&<div><p>Balance: {game.player.bank} gold. Cash: {game.player.gold} gold.</p><button onClick={()=>bankGold(true)}>Deposit 100</button> <button onClick={()=>bankGold(false)}>Withdraw 100</button></div>}
           {service==="trade"&&<div><p>Sell your currently equipped weapon and armor.</p><button onClick={sell}>Sell equipment</button></div>}
           {service==="spells"&&<div className="shop-list">{game.player.spells.map(code=>{const s=SPELLS.find(x=>x[0]===code)!;return <button key={code} onClick={()=>cast(code)}><span>{s[1]}<small>{code.toUpperCase()}</small></span><b>cast</b></button>})}</div>}
+          {service==="inventory"&&<div className="inventory-review"><p><b>Weapon:</b> {game.player.weapon} · attack {game.player.attack}</p><p><b>Armor:</b> {game.player.armorName} · protection {game.player.armor}</p><p><b>Quest items:</b> {game.player.hasEye?"Eye of Larn":"—"}{game.player.hasCure?", Potion of Dianthroritis":""}</p><h3>Pack</h3>{game.bag.length?game.bag.map(it=><button key={it.id} onClick={()=>consumeItem(it.id)}>{it.name} × {it.qty} — {it.kind==="potion"?"drink":"read"}</button>):<p>Your pack is empty.</p>}<h3>Known spells ({game.player.spells.length})</h3><p>{game.player.spells.map(code=>SPELLS.find(s=>s[0]===code)?.[1]).join(", ")}</p></div>}
         </div>}
         {game.status!=="playing"&&<div className="end-card"><span>{game.status==="won"?"VICTORY":"THE DUNGEON CLAIMS YOU"}</span><h2>{game.status==="won"?"Larn is saved.":"Your quest has ended."}</h2><p>{game.status==="won"?`You recovered the cure in ${game.turn} turns with ${game.player.gold} gold.`:"Begin again. The dungeon will be different."}</p><button onClick={()=>setGame(freshGame())}>New adventure</button></div>}
         <div className="mobile-controls"><button onClick={()=>act(0,-1)}>↑</button><div><button onClick={()=>act(-1,0)}>←</button><button onClick={()=>act(0,1)}>↓</button><button onClick={()=>act(1,0)}>→</button></div></div>
@@ -257,10 +263,10 @@ export default function Home() {
       <aside className="panel right-panel">
         <h2>Field Log</h2><div className="log">{game.log.map((l,i)=><p key={`${l}-${i}`} className={i===0?"latest":""}><i>›</i>{l}</p>)}</div>
         <div className="inventory"><h2>Inventory</h2><div className="bag-list">{game.bag.map(it=><button key={it.id} onClick={()=>consumeItem(it.id)}><span className="item-icon">{it.kind==="potion"?"!":"?"}</span><span><strong>{it.name}</strong><small>{it.kind==="potion"?"drink":"read"}</small></span><b>{it.qty}</b></button>)}</div>{game.player.hasEye&&<div className="cure"><span>~</span><strong>The Eye of Larn</strong></div>}{game.player.hasCure&&<div className="cure"><span>✦</span><strong>Potion of Dianthroritis</strong></div>}</div>
-        <button className="escape" onClick={()=>setService("spells")}>Cast spell <kbd>C</kbd></button><button className="escape" onClick={escape} disabled={!game.player.hasCure}>Return to Larn <kbd>E</kbd></button>
+        <button className="escape" onClick={()=>setService("inventory")}>Review inventory <kbd>I</kbd></button><button className="escape" onClick={()=>setService("spells")}>Cast spell <kbd>C</kbd></button><button className="escape" onClick={escape} disabled={!game.player.hasCure}>Return to Larn <kbd>E</kbd></button>
       </aside>
     </section>
-    <footer><div><kbd>WASD</kbd><kbd>ARROWS</kbd><span>MOVE / ATTACK</span></div><div><kbd>Q</kbd><span>DRINK POTION</span></div><div className="turns"><span>TIME REMAINING</span><strong>{Math.max(0,game.deadline-game.turn)}</strong></div></footer>
+    <footer><div><kbd>WASD</kbd><kbd>ARROWS</kbd><span>MOVE / ATTACK</span></div><div><kbd>I</kbd><span>INVENTORY</span></div><div><kbd>C</kbd><span>SPELLS</span></div><div><kbd>Q</kbd><span>DRINK POTION</span></div><div className="turns"><span>TIME REMAINING</span><strong>{Math.max(0,game.deadline-game.turn)}</strong></div></footer>
   </main>;
 }
 
