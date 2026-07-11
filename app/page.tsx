@@ -35,6 +35,8 @@ function rng(seed: number) { let n = seed >>> 0; return () => ((n = Math.imul(n 
 function distance(a: Point, b: Point) { return Math.abs(a.x - b.x) + Math.abs(a.y - b.y); }
 function blankExplored(){return Array.from({length:H},()=>Array(W).fill(false))}
 function revealAround(explored:boolean[][],p:Point,radius=4){for(let y=Math.max(0,p.y-radius);y<=Math.min(H-1,p.y+radius);y++)for(let x=Math.max(0,p.x-radius);x<=Math.min(W-1,p.x+radius);x++)if(Math.hypot(x-p.x,y-p.y)<=radius+.35)explored[y][x]=true}
+function doorwayCandidates(tiles:string[][]){const out:Point[]=[];for(let y=2;y<H-2;y++)for(let x=2;x<W-2;x++){if(tiles[y][x]!==".")continue;const n=tiles[y-1][x]!=="#",s=tiles[y+1][x]!=="#",e=tiles[y][x+1]!=="#",w=tiles[y][x-1]!=="#";if((n&&s&&!e&&!w)||(e&&w&&!n&&!s))out.push({x,y})}return out}
+function diversifyPotions(items:Item[],seed:number){const pots=items.filter(i=>i.kind==="potion");if(pots.length<2)return;const allowed=[...POTIONS.slice(0,Math.min(POTIONS.length,12))];for(let i=0;i<pots.length;i++){const j=(Math.abs(seed)+i*7)%allowed.length;const effect=allowed.splice(j,1)[0]??POTIONS[(i+3)%POTIONS.length];pots[i].effect=effect;pots[i].name=`potion of ${effect}`}}
 
 function makeFloor(level: number, seed = Date.now()): Floor {
   const r = rng(seed + level * 9973);
@@ -70,8 +72,10 @@ function makeFloor(level: number, seed = Date.now()): Floor {
     monsters.push({ id: `m${level}-${i}-${seed}`, name: m[0], glyph: m[1], hp, maxHp: hp, attack: m[3], xp: m[4], gold: m[5], ...p });
   }
   const items: Item[] = [];
-  for (let i = 0; i < 3; i++) {const effect=POTIONS[Math.floor(r()*Math.min(POTIONS.length,8+level))];items.push({ id: `p${level}-${i}-${seed}`, name: `potion of ${effect}`, glyph: "!", kind: "potion", effect, amount: 1, ...spot() });}
-  for (let i = 0; i < 3; i++) {const effect=SCROLLS[Math.floor(r()*Math.min(SCROLLS.length,8+level))];items.push({ id: `s${level}-${i}-${seed}`, name: `scroll of ${effect}`, glyph: "?", kind: "scroll", effect, amount: 1, ...spot() });}
+  const potionPool=[...POTIONS.slice(0,Math.min(POTIONS.length,8+level))];
+  for (let i = 0; i < 3; i++) {const pick=Math.floor(r()*potionPool.length),effect=potionPool.splice(pick,1)[0];items.push({ id: `p${level}-${i}-${seed}`, name: `potion of ${effect}`, glyph: "!", kind: "potion", effect, amount: 1, ...spot() });}
+  const scrollPool=[...SCROLLS.slice(0,Math.min(SCROLLS.length,8+level))];
+  for (let i = 0; i < 3; i++) {const pick=Math.floor(r()*scrollPool.length),effect=scrollPool.splice(pick,1)[0];items.push({ id: `s${level}-${i}-${seed}`, name: `scroll of ${effect}`, glyph: "?", kind: "scroll", effect, amount: 1, ...spot() });}
   for (let i = 0; i < 3; i++) items.push({ id: `c${level}-${i}-${seed}`, name: "gold", glyph: "$", kind: "gold", amount: 3 + Math.floor(r() * 10), ...spot() });
   for (let i = 0; i < 1+Math.floor(level/4); i++) {const value=25+level*10+Math.floor(r()*40);items.push({id:`gem-${level}-${i}-${seed}`,name:["sapphire","ruby","emerald","diamond"][Math.floor(r()*4)],glyph:"*",kind:"gem",amount:value,...spot()})}
   if(r()<.38){const choices=SPELLS.slice(2,Math.min(SPELLS.length,8+level*2));const spell=choices[Math.floor(r()*choices.length)];items.push({id:`book-${level}-${seed}`,name:`spellbook: ${spell[1]}`,glyph:"+",kind:"spellbook",effect:spell[0],amount:1,...spot()})}
@@ -85,7 +89,8 @@ function makeFloor(level: number, seed = Date.now()): Floor {
   if(level>2&&r()>.5){const p=spot();features.push({id:`altar-${level}-${seed}`,kind:"altar",used:false,...p});tiles[p.y][p.x]="_"}
   const specialKinds=["chest","statue","throne","pit","mirror"] as const;
   for(let i=0;i<2+Math.floor(level/3);i++){const kind=specialKinds[Math.floor(r()*specialKinds.length)],p=spot();features.push({id:`${kind}-${level}-${i}-${seed}`,kind,used:false,...p});tiles[p.y][p.x]=kind==="chest"?"C":kind==="statue"?"&":kind==="throne"?"T":kind==="pit"?"P":"M"}
-  for(let i=1;i<rooms.length;i++){if(r()<.55){const p={x:rooms[i].cx,y:rooms[i].cy};if(!occupied.has(`${p.x},${p.y}`)){features.push({id:`door-${level}-${i}-${seed}`,kind:"door",used:false,...p});tiles[p.y][p.x]="+"}}}
+  const doorways=doorwayCandidates(tiles).filter(p=>!occupied.has(`${p.x},${p.y}`));
+  for(let i=0;i<Math.min(3,doorways.length);i++){if(r()<.65){const p=doorways.splice(Math.floor(r()*doorways.length),1)[0];occupied.add(`${p.x},${p.y}`);features.push({id:`door-${level}-${i}-${seed}`,kind:"door",used:false,...p});tiles[p.y][p.x]="+"}}
   return { tiles, monsters, items, features, stairs, up, start };
 }
 
@@ -240,7 +245,7 @@ export default function Home() {
   }),[update]);
   const drink = useCallback(() => {const p=game.bag.find(x=>x.kind==="potion"&&x.effect==="healing");if(p)consumeItem(p.id);else update(g=>pushLog(g,"You have no healing potions."))}, [game.bag,consumeItem,update]);
   const escape = useCallback(() => update(g => { if (g.status !== "playing") return; if (!g.player.hasCure) return pushLog(g, "You cannot finish the quest without the cure."); pushLog(g, "Carry the cure back up through the dungeon to your home in Larn."); }), [update]);
-  const restoreGame=useCallback((old:Game)=>{const base=freshGame();const floors=old.floors??base.floors;Object.values(floors).forEach(f=>f.features??=[]);const explored=old.explored??(old.floor===0?Array.from({length:H},()=>Array(W).fill(true)):blankExplored());revealAround(explored,old.player);setGame({...base,...old,features:old.features??[],deadline:old.deadline??2500,floors,explored,gems:old.gems??0,gemValue:old.gemValue??0,shopStock:old.shopStock??base.shopStock,player:{...base.player,...old.player,spells:old.player.spells??base.player.spells}})},[]);
+  const restoreGame=useCallback((old:Game)=>{const base=freshGame();const floors=old.floors??base.floors;Object.entries(floors).forEach(([key,f])=>{f.features??=[];diversifyPotions(f.items,Number(key)*97);const bad=f.features.filter(x=>x.kind==="door"&&!x.used);bad.forEach(d=>f.tiles[d.y][d.x]=".");f.features=f.features.filter(x=>x.kind!=="door"||x.used);const candidates=doorwayCandidates(f.tiles).filter(p=>!f.items.some(i=>i.x===p.x&&i.y===p.y)&&!f.monsters.some(m=>m.x===p.x&&m.y===p.y));bad.slice(0,Math.min(3,candidates.length)).forEach((d,i)=>{const p=candidates[i];d.x=p.x;d.y=p.y;f.features.push(d);f.tiles[p.y][p.x]="+"})});const explored=old.explored??(old.floor===0?Array.from({length:H},()=>Array(W).fill(true)):blankExplored());revealAround(explored,old.player);const current=floors[old.floor];setGame({...base,...old,tiles:current?.tiles??old.tiles,items:current?.items??old.items,features:current?.features??old.features,deadline:old.deadline??2500,floors,explored,gems:old.gems??0,gemValue:old.gemValue??0,shopStock:old.shopStock??base.shopStock,player:{...base.player,...old.player,spells:old.player.spells??base.player.spells}})},[]);
   useEffect(()=>{const raw=localStorage.getItem("jeremys-larn-saves");let saves:SavedGame[]=raw?JSON.parse(raw):[];const legacy=localStorage.getItem("jeremys-larn-save");if(legacy&&!localStorage.getItem("jeremys-larn-legacy-migrated")){saves.unshift({id:`legacy-${Date.now()}`,name:"Original save",savedAt:new Date().toISOString(),game:JSON.parse(legacy)});localStorage.setItem("jeremys-larn-legacy-migrated","1");localStorage.setItem("jeremys-larn-saves",JSON.stringify(saves))}setSavedGames(saves)},[]);
   const save = useCallback(() => {const name=saveName.trim()||`Adventure ${savedGames.length+1}`;const entry:SavedGame={id:`save-${Date.now()}`,name,savedAt:new Date().toISOString(),game};const next=[entry,...savedGames];localStorage.setItem("jeremys-larn-saves",JSON.stringify(next));setSavedGames(next);setSaveName("");update(g=>pushLog(g,`Saved as “${name}”.`));},[game,saveName,savedGames,update]);
   const load = useCallback((entry:SavedGame) => {restoreGame(entry.game);setService("none")},[restoreGame]);
