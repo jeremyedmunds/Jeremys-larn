@@ -44,3 +44,6 @@ export const SPELLS = [
   ["sph","sphere of annihilation"],["gen","genocide"],["sum","summon demon"],
   ["wtw","walk through walls"],["alt","alter reality"],["per","permanence"]
 ] as const;
+
+export const POTIONS = ["sleep","healing","raise level","increase ability","wisdom","strength","raise charisma","dizziness","learning","object detection","monster detection","forgetfulness","water","blindness","confusion","heroism","sturdiness","giant strength","fire resistance","treasure finding","instant healing","cure dianthroritis","poison","see invisible"] as const;
+export const SCROLLS = ["enchant armor","enchant weapon","enlightenment","blank paper","create monster","create artifact","aggravate monsters","time warp","teleportation","expanded awareness","haste monsters","monster healing","spirit protection","undead protection","stealth","magic mapping","hold monsters","gem perfection","spell extension","identify","remove curse","annihilation","pulverization","life protection"] as const;

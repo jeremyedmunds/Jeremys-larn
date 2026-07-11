@@ -1,16 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { DND_STOCK, EXPERIENCE, RANKS, type ShopItem } from "./larn-data";
+import { DND_STOCK, EXPERIENCE, POTIONS, RANKS, SCROLLS, type ShopItem } from "./larn-data";
 
 type Point = { x: number; y: number };
-type Item = { id: string; name: string; glyph: string; kind: "heal" | "gold" | "cure" | "eye" | "weapon" | "armor"; amount: number } & Point;
+type Item = { id: string; name: string; glyph: string; kind: "heal" | "gold" | "cure" | "eye" | "weapon" | "armor" | "potion" | "scroll"; amount: number; effect?:string } & Point;
+type BagItem = { id:string; name:string; kind:"potion"|"scroll"|"misc"; effect:string; qty:number };
 type Monster = { id: string; name: string; glyph: string; hp: number; maxHp: number; attack: number; xp: number; gold: number } & Point;
 type Floor = { tiles: string[][]; monsters: Monster[]; items: Item[]; stairs: Point; up: Point; start: Point };
 type Game = {
   floor: number; tiles: string[][]; monsters: Monster[]; items: Item[]; stairs: Point; up: Point;
   player: Point & { hp: number; maxHp: number; attack: number; armor: number; strength:number; intelligence:number; wisdom:number; constitution:number; dexterity:number; charisma:number; level: number; xp: number; gold: number; bank: number; potions: number; hasEye: boolean; hasCure: boolean; weapon: string; armorName: string };
-  turn: number; status: "playing" | "won" | "dead"; log: string[]; shopStock:number[];
+  turn: number; status: "playing" | "won" | "dead"; log: string[]; shopStock:number[]; bag:BagItem[]; awareness:number;
 };
 
 const W = 41, H = 23, LAST_FLOOR = 13;
@@ -62,7 +63,8 @@ function makeFloor(level: number, seed = Date.now()): Floor {
     monsters.push({ id: `m${level}-${i}-${seed}`, name: m[0], glyph: m[1], hp, maxHp: hp, attack: m[3], xp: m[4], gold: m[5], ...p });
   }
   const items: Item[] = [];
-  for (let i = 0; i < 3; i++) items.push({ id: `p${level}-${i}-${seed}`, name: "healing potion", glyph: "!", kind: "heal", amount: 8, ...spot() });
+  for (let i = 0; i < 3; i++) {const effect=POTIONS[Math.floor(r()*Math.min(POTIONS.length,8+level))];items.push({ id: `p${level}-${i}-${seed}`, name: `potion of ${effect}`, glyph: "!", kind: "potion", effect, amount: 1, ...spot() });}
+  for (let i = 0; i < 3; i++) {const effect=SCROLLS[Math.floor(r()*Math.min(SCROLLS.length,8+level))];items.push({ id: `s${level}-${i}-${seed}`, name: `scroll of ${effect}`, glyph: "?", kind: "scroll", effect, amount: 1, ...spot() });}
   for (let i = 0; i < 3; i++) items.push({ id: `c${level}-${i}-${seed}`, name: "gold", glyph: "$", kind: "gold", amount: 3 + Math.floor(r() * 10), ...spot() });
   if (level > 1 && r() > .45) items.push({ id:`w${level}-${seed}`, name: level > 6 ? "longsword" : "spear", glyph:")", kind:"weapon", amount: level > 6 ? 3 : 1, ...spot() });
   if (level > 2 && r() > .5) items.push({ id:`a${level}-${seed}`, name: level > 7 ? "plate armor" : "ring mail", glyph:"[", kind:"armor", amount: level > 7 ? 4 : 2, ...spot() });
@@ -84,10 +86,11 @@ function freshGame(): Game {
   const f = makeTown();
   return { floor: 0, tiles: f.tiles, monsters: f.monsters, items: f.items, stairs: f.stairs, up:f.up,
     player: { ...f.start, hp: 20, maxHp: 20, attack: 2, armor:0, strength:12,intelligence:12,wisdom:12,constitution:12,dexterity:12,charisma:12,level: 1, xp: 0, gold: 250, bank:0, potions: 1, hasEye:false, hasCure: false, weapon:"none", armorName:"clothes" },
-    turn: 0, status: "playing", shopStock:DND_STOCK.map(x=>x.stock), log: ["Welcome to the town of Larn.", "Your daughter is dying of dianthroritis. Find the cure in the volcanic depths."] };
+    turn: 0, status: "playing", shopStock:DND_STOCK.map(x=>x.stock), bag:[{id:"start-heal",name:"potion of healing",kind:"potion",effect:"healing",qty:1}],awareness:0, log: ["Welcome to the town of Larn.", "Your daughter is dying of dianthroritis. Find the cure in the volcanic depths."] };
 }
 
 function pushLog(g: Game, text: string) { g.log = [text, ...g.log].slice(0, 8); }
+function addBag(g:Game,item:BagItem){const old=g.bag.find(x=>x.kind===item.kind&&x.effect===item.effect);if(old)old.qty+=item.qty;else g.bag.push(item)}
 
 export default function Home() {
   const [game, setGame] = useState<Game>(() => freshGame());
@@ -107,6 +110,7 @@ export default function Home() {
     const item = g.items.find(i => i.x === g.player.x && i.y === g.player.y);
     if (item) {
       if (item.kind === "heal") { g.player.potions++; pushLog(g, "You pick up a healing potion."); }
+      if (item.kind === "potion"||item.kind==="scroll") {addBag(g,{id:item.id,name:item.name,kind:item.kind,effect:item.effect||"",qty:1});pushLog(g,`You pick up a ${item.name}.`)}
       if (item.kind === "gold") { g.player.gold += item.amount; pushLog(g, `You collect ${item.amount} gold.`); }
       if (item.kind === "cure") { g.player.hasCure = true; pushLog(g, "You found the Potion of Dianthroritis! Return upward."); }
       if (item.kind === "eye") { g.player.hasEye = true; pushLog(g, "You claim the legendary Eye of Larn."); }
@@ -141,7 +145,31 @@ export default function Home() {
     else if (g.player.hp <= 0) { g.player.hp = 0; g.status = "dead"; pushLog(g, "You have fallen beneath Larn."); }
   }), [update]);
 
-  const drink = useCallback(() => update(g => { if (g.status !== "playing") return; if (!g.player.potions) return pushLog(g, "You have no healing potions."); if (g.player.hp === g.player.maxHp) return pushLog(g, "You are already at full health."); const n=Math.min(12,g.player.maxHp-g.player.hp); g.player.hp+=n; g.player.potions--; g.turn++; pushLog(g, `You recover ${n} health.`); }), [update]);
+  const consumeItem = useCallback((id:string)=>update(g=>{const item=g.bag.find(x=>x.id===id);if(!item||g.status!=="playing")return;const effect=item.effect;
+    if(item.kind==="potion"){
+      if(effect==="healing"||effect==="instant healing"){const n=Math.min(effect==="instant healing"?g.player.maxHp:12,g.player.maxHp-g.player.hp);g.player.hp+=n;pushLog(g,`You recover ${n} health.`)}
+      else if(effect==="raise level")g.player.xp=EXPERIENCE[Math.min(g.player.level,EXPERIENCE.length-1)];
+      else if(effect==="strength"||effect==="giant strength")g.player.strength+=effect==="giant strength"?4:1;
+      else if(effect==="wisdom")g.player.wisdom++;
+      else if(effect==="raise charisma")g.player.charisma++;
+      else if(effect==="increase ability"){g.player.strength++;g.player.dexterity++;g.player.constitution++}
+      else if(effect==="poison"){g.player.hp=Math.max(1,g.player.hp-10);pushLog(g,"The potion was poison!")}
+      else if(effect==="heroism"){g.player.attack+=2;pushLog(g,"You feel heroic.")}
+      else if(effect==="sturdiness"){g.player.maxHp+=5;g.player.hp+=5}
+      else if(effect==="object detection"||effect==="monster detection")g.awareness=40;
+      else pushLog(g,`You drink the potion of ${effect}.`);
+    } else {
+      if(effect==="enchant weapon")g.player.attack++;
+      else if(effect==="enchant armor")g.player.armor++;
+      else if(effect==="enlightenment"||effect==="magic mapping"||effect==="expanded awareness")g.awareness=100;
+      else if(effect==="teleportation"){const cells=[] as Point[];for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++)if(g.tiles[y][x]!=="#")cells.push({x,y});Object.assign(g.player,cells[Math.floor(Math.random()*cells.length)])}
+      else if(effect==="annihilation"){g.monsters=[];pushLog(g,"Every monster on the level is annihilated.")}
+      else if(effect==="hold monsters"){g.awareness=25;pushLog(g,"The monsters are held motionless.")}
+      else pushLog(g,`You read the scroll of ${effect}.`);
+    }
+    item.qty--;if(item.qty<=0)g.bag=g.bag.filter(x=>x.id!==id);g.turn++;
+  }),[update]);
+  const drink = useCallback(() => {const p=game.bag.find(x=>x.kind==="potion"&&x.effect==="healing");if(p)consumeItem(p.id);else update(g=>pushLog(g,"You have no healing potions."))}, [game.bag,consumeItem,update]);
   const escape = useCallback(() => update(g => { if (g.status !== "playing") return; if (!g.player.hasCure) return pushLog(g, "You cannot finish the quest without the cure."); pushLog(g, "Carry the cure back up through the dungeon to your home in Larn."); }), [update]);
   const save = useCallback(() => { localStorage.setItem("jeremys-larn-save", JSON.stringify(game)); update(g => pushLog(g, "Game saved in this browser.")); }, [game, update]);
   const load = useCallback(() => { const raw=localStorage.getItem("jeremys-larn-save"); if(raw){const old=JSON.parse(raw) as Game;const base=freshGame();setGame({...base,...old,shopStock:old.shopStock??base.shopStock,player:{...base.player,...old.player}})} }, []);
@@ -151,12 +179,7 @@ export default function Home() {
     g.player.gold-=item.price;g.shopStock[index]--;
     if(item.kind==="weapon"&&item.power){g.player.weapon=item.name;g.player.attack=2+item.power;}
     if(item.kind==="armor"&&item.power){g.player.armorName=item.name;g.player.armor=item.power;}
-    if(item.effect==="healing")g.player.potions++;
-    if(item.effect==="strength")g.player.strength++;
-    if(item.effect==="wisdom")g.player.wisdom++;
-    if(item.effect==="charisma")g.player.charisma++;
-    if(item.effect==="increase ability"){g.player.strength++;g.player.dexterity++;}
-    if(item.effect==="raise level")g.player.xp=EXPERIENCE[Math.min(g.player.level,EXPERIENCE.length-1)];
+    if(item.effect)addBag(g,{id:`shop-${item.effect}`,name:item.name,kind:"potion",effect:item.effect,qty:1});
     pushLog(g,`Purchased ${item.name} for ${item.price} gold.`);
   }),[update]);
 
@@ -188,7 +211,7 @@ export default function Home() {
       </section>
       <aside className="panel right-panel">
         <h2>Field Log</h2><div className="log">{game.log.map((l,i)=><p key={`${l}-${i}`} className={i===0?"latest":""}><i>›</i>{l}</p>)}</div>
-        <div className="inventory"><h2>Inventory</h2><button onClick={drink}><span className="item-icon">!</span><span><strong>Healing potion</strong><small>Q · restores 12 HP</small></span><b>{game.player.potions}</b></button>{game.player.hasCure&&<div className="cure"><span>✦</span><strong>Potion of Dianthroritis</strong></div>}</div>
+        <div className="inventory"><h2>Inventory</h2><div className="bag-list">{game.bag.map(it=><button key={it.id} onClick={()=>consumeItem(it.id)}><span className="item-icon">{it.kind==="potion"?"!":"?"}</span><span><strong>{it.name}</strong><small>{it.kind==="potion"?"drink":"read"}</small></span><b>{it.qty}</b></button>)}</div>{game.player.hasEye&&<div className="cure"><span>~</span><strong>The Eye of Larn</strong></div>}{game.player.hasCure&&<div className="cure"><span>✦</span><strong>Potion of Dianthroritis</strong></div>}</div>
         <button className="escape" onClick={escape} disabled={!game.player.hasCure}>Return to Larn <kbd>E</kbd></button>
       </aside>
     </section>
