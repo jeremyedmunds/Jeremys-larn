@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { DND_STOCK, EXPERIENCE, RANKS, type ShopItem } from "./larn-data";
 
 type Point = { x: number; y: number };
 type Item = { id: string; name: string; glyph: string; kind: "heal" | "gold" | "cure" | "eye" | "weapon" | "armor"; amount: number } & Point;
@@ -8,8 +9,8 @@ type Monster = { id: string; name: string; glyph: string; hp: number; maxHp: num
 type Floor = { tiles: string[][]; monsters: Monster[]; items: Item[]; stairs: Point; up: Point; start: Point };
 type Game = {
   floor: number; tiles: string[][]; monsters: Monster[]; items: Item[]; stairs: Point; up: Point;
-  player: Point & { hp: number; maxHp: number; attack: number; armor: number; level: number; xp: number; gold: number; bank: number; potions: number; hasEye: boolean; hasCure: boolean; weapon: string; armorName: string };
-  turn: number; status: "playing" | "won" | "dead"; log: string[];
+  player: Point & { hp: number; maxHp: number; attack: number; armor: number; strength:number; intelligence:number; wisdom:number; constitution:number; dexterity:number; charisma:number; level: number; xp: number; gold: number; bank: number; potions: number; hasEye: boolean; hasCure: boolean; weapon: string; armorName: string };
+  turn: number; status: "playing" | "won" | "dead"; log: string[]; shopStock:number[];
 };
 
 const W = 41, H = 23, LAST_FLOOR = 13;
@@ -82,8 +83,8 @@ function makeTown(): Floor {
 function freshGame(): Game {
   const f = makeTown();
   return { floor: 0, tiles: f.tiles, monsters: f.monsters, items: f.items, stairs: f.stairs, up:f.up,
-    player: { ...f.start, hp: 20, maxHp: 20, attack: 2, armor:0, level: 1, xp: 0, gold: 0, bank:0, potions: 1, hasEye:false, hasCure: false, weapon:"none", armorName:"clothes" },
-    turn: 0, status: "playing", log: ["Welcome to the town of Larn.", "Your daughter is dying of dianthroritis. Find the cure in the volcanic depths."] };
+    player: { ...f.start, hp: 20, maxHp: 20, attack: 2, armor:0, strength:12,intelligence:12,wisdom:12,constitution:12,dexterity:12,charisma:12,level: 1, xp: 0, gold: 250, bank:0, potions: 1, hasEye:false, hasCure: false, weapon:"none", armorName:"clothes" },
+    turn: 0, status: "playing", shopStock:DND_STOCK.map(x=>x.stock), log: ["Welcome to the town of Larn.", "Your daughter is dying of dianthroritis. Find the cure in the volcanic depths."] };
 }
 
 function pushLog(g: Game, text: string) { g.log = [text, ...g.log].slice(0, 8); }
@@ -113,8 +114,8 @@ export default function Home() {
       if (item.kind === "armor" && item.amount > g.player.armor) { g.player.armor=item.amount; g.player.armorName=item.name; pushLog(g, `You equip the ${item.name}.`); }
       g.items = g.items.filter(i => i.id !== item.id);
     }
-    const need = g.player.level * 22;
-    if (g.player.xp >= need) { g.player.level++; g.player.xp -= need; g.player.maxHp += 8; g.player.hp = g.player.maxHp; g.player.attack += 2; pushLog(g, `You rise to level ${g.player.level}!`); }
+    const need = EXPERIENCE[Math.min(g.player.level,EXPERIENCE.length-1)];
+    if (g.player.xp >= need) { g.player.level++; g.player.maxHp += 3+Math.floor(g.player.constitution/5); g.player.hp = g.player.maxHp; pushLog(g, `You become a ${RANKS[Math.min(g.player.level-1,RANKS.length-1)]}!`); }
     const tile=g.tiles[g.player.y][g.player.x];
     if (tile === ">" && g.floor < LAST_FLOOR) {
       const f = makeFloor(g.floor + 1); g.floor++; g.tiles = f.tiles; g.monsters = f.monsters; g.items = f.items; g.stairs = f.stairs; g.up=f.up; Object.assign(g.player, f.start); pushLog(g, `You descend to ${g.floor<=10?`dungeon level ${g.floor}`:`volcanic level V${g.floor-10}`}.`);
@@ -122,7 +123,7 @@ export default function Home() {
       const next=g.floor-1; const f=next===0?makeTown():makeFloor(next); g.floor=next; g.tiles=f.tiles;g.monsters=f.monsters;g.items=f.items;g.stairs=f.stairs;g.up=f.up;Object.assign(g.player,next===0?f.start:f.stairs);pushLog(g,next===0?"You emerge in the town of Larn.":`You climb to dungeon level ${next}.`);
     } else if(g.floor===0){
       if(tile==="H"){g.player.hp=g.player.maxHp;pushLog(g,g.player.hasCure?"You return home with the cure. Your daughter will live!":"You rest at home and recover your health.");if(g.player.hasCure)g.status="won"}
-      if(tile==="S"){if(g.player.gold>=25){g.player.gold-=25;g.player.potions++;pushLog(g,"DND Store: bought a healing potion for 25 gold.")}else pushLog(g,"DND Store: a healing potion costs 25 gold.")}
+      if(tile==="S")pushLog(g,"Welcome to the Larn Thrift Shoppe. Select an item to purchase.");
       if(tile==="C")pushLog(g,"College of Larn: magical instruction will be available soon.");
       if(tile==="B")pushLog(g,`Bank of Larn: balance ${g.player.bank} gold.`);
       if(tile==="T")pushLog(g,"Trading Post: bring equipment here to sell.");
@@ -143,12 +144,27 @@ export default function Home() {
   const drink = useCallback(() => update(g => { if (g.status !== "playing") return; if (!g.player.potions) return pushLog(g, "You have no healing potions."); if (g.player.hp === g.player.maxHp) return pushLog(g, "You are already at full health."); const n=Math.min(12,g.player.maxHp-g.player.hp); g.player.hp+=n; g.player.potions--; g.turn++; pushLog(g, `You recover ${n} health.`); }), [update]);
   const escape = useCallback(() => update(g => { if (g.status !== "playing") return; if (!g.player.hasCure) return pushLog(g, "You cannot finish the quest without the cure."); pushLog(g, "Carry the cure back up through the dungeon to your home in Larn."); }), [update]);
   const save = useCallback(() => { localStorage.setItem("jeremys-larn-save", JSON.stringify(game)); update(g => pushLog(g, "Game saved in this browser.")); }, [game, update]);
-  const load = useCallback(() => { const raw=localStorage.getItem("jeremys-larn-save"); if (raw) setGame(JSON.parse(raw)); }, []);
+  const load = useCallback(() => { const raw=localStorage.getItem("jeremys-larn-save"); if(raw){const old=JSON.parse(raw) as Game;const base=freshGame();setGame({...base,...old,shopStock:old.shopStock??base.shopStock,player:{...base.player,...old.player}})} }, []);
+  const buy = useCallback((item:ShopItem,index:number)=>update(g=>{
+    if(!g.shopStock[index])return pushLog(g,`${item.name} is sold out.`);
+    if(g.player.gold<item.price)return pushLog(g,`You need ${item.price-g.player.gold} more gold.`);
+    g.player.gold-=item.price;g.shopStock[index]--;
+    if(item.kind==="weapon"&&item.power){g.player.weapon=item.name;g.player.attack=2+item.power;}
+    if(item.kind==="armor"&&item.power){g.player.armorName=item.name;g.player.armor=item.power;}
+    if(item.effect==="healing")g.player.potions++;
+    if(item.effect==="strength")g.player.strength++;
+    if(item.effect==="wisdom")g.player.wisdom++;
+    if(item.effect==="charisma")g.player.charisma++;
+    if(item.effect==="increase ability"){g.player.strength++;g.player.dexterity++;}
+    if(item.effect==="raise level")g.player.xp=EXPERIENCE[Math.min(g.player.level,EXPERIENCE.length-1)];
+    pushLog(g,`Purchased ${item.name} for ${item.price} gold.`);
+  }),[update]);
 
   useEffect(() => { const onKey=(e:KeyboardEvent) => { if (dirs[e.key]) { e.preventDefault(); act(dirs[e.key].x, dirs[e.key].y); } if (e.key.toLowerCase()==="q") drink(); if (e.key.toLowerCase()==="e") escape(); }; window.addEventListener("keydown",onKey); return()=>window.removeEventListener("keydown",onKey); }, [act,drink,escape]);
 
   const entities = useMemo(() => { const map=new Map<string,{glyph:string;kind:string;title:string}>(); game.items.forEach(i=>map.set(`${i.x},${i.y}`,{glyph:i.glyph,kind:`item ${i.kind}`,title:i.name})); game.monsters.forEach(m=>map.set(`${m.x},${m.y}`,{glyph:m.glyph,kind:"monster",title:`${m.name} (${m.hp}/${m.maxHp})`})); map.set(`${game.player.x},${game.player.y}`,{glyph:"@",kind:"player",title:"You"}); return map; },[game]);
-  const hpPct = 100*game.player.hp/game.player.maxHp, xpPct=100*game.player.xp/(game.player.level*22);
+  const nextXp=EXPERIENCE[Math.min(game.player.level,EXPERIENCE.length-1)],hpPct = 100*game.player.hp/game.player.maxHp, xpPct=100*game.player.xp/nextXp;
+  const atStore=game.floor===0&&game.tiles[game.player.y]?.[game.player.x]==="S";
 
   return <main className="game-shell">
     <header><div><span className="eyebrow">A browser roguelike</span><h1>LARN <b>REBORN</b></h1></div><div className="header-actions"><button onClick={save}>Save</button><button onClick={load}>Load</button><button aria-label="Toggle sound" className={sound?"active":""} onClick={()=>setSound(!sound)}>♪</button></div></header>
@@ -156,15 +172,17 @@ export default function Home() {
       <aside className="panel stats">
         <h2>Adventurer</h2><div className="portrait">@</div>
         <Stat label="Health" value={`${game.player.hp}/${game.player.maxHp}`} pct={hpPct} tone="red" />
-        <Stat label="Experience" value={`${game.player.xp}/${game.player.level*22}`} pct={xpPct} tone="gold" />
+        <Stat label="Experience" value={`${game.player.xp}/${nextXp}`} pct={xpPct} tone="gold" />
         <div className="stat-grid"><span>LEVEL<strong>{game.player.level}</strong></span><span>ARMOR<strong>{game.player.armor}</strong></span><span>GOLD<strong>{game.player.gold}</strong></span><span>LOCATION<strong>{game.floor===0?"TOWN":game.floor<=10?game.floor:`V${game.floor-10}`}</strong></span></div>
         <div className="equipment"><small>WEAPON</small><strong>{game.player.weapon}</strong><small>ARMOR</small><strong>{game.player.armorName}</strong></div>
+        <div className="abilities"><span>STR<b>{game.player.strength}</b></span><span>INT<b>{game.player.intelligence}</b></span><span>WIS<b>{game.player.wisdom}</b></span><span>CON<b>{game.player.constitution}</b></span><span>DEX<b>{game.player.dexterity}</b></span><span>CHA<b>{game.player.charisma}</b></span></div>
         <div className="quest"><span>PRIMARY QUEST</span><strong>{game.player.hasCure?"Return home with the cure":game.player.hasEye?"Seek the cure in the volcano":"Find the Eye of Larn"}</strong><small>{game.player.hasCure?"Climb back to the town.":game.player.hasEye?"Three volcanic levels remain.":"The Eye lies on dungeon level 10."}</small></div>
       </aside>
       <section className="map-wrap">
         <div className="map" role="application" aria-label="Dungeon map">
           {game.tiles.flatMap((row,y)=>row.map((tile,x)=>{ const e=entities.get(`${x},${y}`); const townNames:Record<string,string>={H:"Your home",S:"DND Store",C:"College of Larn",B:"Bank of Larn",T:"Trading Post",R:"Larn Revenue Service"}; return <span key={`${x}-${y}`} title={e?.title||townNames[tile]} className={e?.kind || (tile==="#"?"wall":tile===">"||tile==="<"||tile==="Ω"?"stairs":townNames[tile]?"town-place":"floor")}>{e?.glyph || (tile==="#"?"▓":tile)}</span>; }))}
         </div>
+        {atStore&&<div className="shop-card"><div className="shop-head"><span>DND STORE · LARN THRIFT SHOPPE</span><strong>{game.player.gold} GP</strong></div><p>Original 12.3 stock and prices. Purchases equip automatically where appropriate.</p><div className="shop-list">{DND_STOCK.map((it,i)=><button key={it.name} disabled={!game.shopStock[i]||game.player.gold<it.price} onClick={()=>buy(it,i)}><span>{it.name}<small>{it.kind}</small></span><b>{it.price} gp</b><em>{game.shopStock[i]}</em></button>)}</div><small className="shop-exit">Move away from the S to leave the store.</small></div>}
         {game.status!=="playing"&&<div className="end-card"><span>{game.status==="won"?"VICTORY":"THE DUNGEON CLAIMS YOU"}</span><h2>{game.status==="won"?"Larn is saved.":"Your quest has ended."}</h2><p>{game.status==="won"?`You recovered the cure in ${game.turn} turns with ${game.player.gold} gold.`:"Begin again. The dungeon will be different."}</p><button onClick={()=>setGame(freshGame())}>New adventure</button></div>}
         <div className="mobile-controls"><button onClick={()=>act(0,-1)}>↑</button><div><button onClick={()=>act(-1,0)}>←</button><button onClick={()=>act(0,1)}>↓</button><button onClick={()=>act(1,0)}>→</button></div></div>
       </section>
