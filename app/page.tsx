@@ -7,9 +7,10 @@ type Point = { x: number; y: number };
 type Item = { id: string; name: string; glyph: string; kind: "heal" | "gold" | "cure" | "eye" | "weapon" | "armor" | "potion" | "scroll"; amount: number; effect?:string } & Point;
 type BagItem = { id:string; name:string; kind:"potion"|"scroll"|"misc"; effect:string; qty:number };
 type Monster = { id: string; name: string; glyph: string; hp: number; maxHp: number; attack: number; xp: number; gold: number } & Point;
-type Floor = { tiles: string[][]; monsters: Monster[]; items: Item[]; stairs: Point; up: Point; start: Point };
+type Feature = Point & { id:string; kind:"trap"|"fountain"|"altar"; used:boolean };
+type Floor = { tiles: string[][]; monsters: Monster[]; items: Item[]; features:Feature[]; stairs: Point; up: Point; start: Point };
 type Game = {
-  floor: number; tiles: string[][]; monsters: Monster[]; items: Item[]; stairs: Point; up: Point;
+  floor: number; tiles: string[][]; monsters: Monster[]; items: Item[]; features:Feature[]; stairs: Point; up: Point;
   player: Point & { hp: number; maxHp: number; mana:number; maxMana:number; attack: number; armor: number; strength:number; intelligence:number; wisdom:number; constitution:number; dexterity:number; charisma:number; level: number; xp: number; gold: number; bank: number; potions: number; hasEye: boolean; hasCure: boolean; weapon: string; armorName: string; spells:string[] };
   turn: number; deadline:number; status: "playing" | "won" | "dead"; log: string[]; shopStock:number[]; bag:BagItem[]; awareness:number; floors:Record<number,Floor>;
 };
@@ -70,7 +71,11 @@ function makeFloor(level: number, seed = Date.now()): Floor {
   if (level > 2 && r() > .5) items.push({ id:`a${level}-${seed}`, name: level > 7 ? "plate armor" : "ring mail", glyph:"[", kind:"armor", amount: level > 7 ? 4 : 2, ...spot() });
   if (level === 10) items.push({ id:`eye-${seed}`, name:"The Eye of Larn", glyph:"~", kind:"eye", amount:1, x:stairs.x, y:stairs.y });
   if (level === LAST_FLOOR) items.push({ id: `cure-${seed}`, name: "Potion of Dianthroritis", glyph: "✦", kind: "cure", amount: 1, x: stairs.x, y: stairs.y });
-  return { tiles, monsters, items, stairs, up, start };
+  const features:Feature[]=[];
+  for(let i=0;i<Math.min(3,Math.ceil(level/3));i++){const p=spot();features.push({id:`trap-${level}-${i}-${seed}`,kind:"trap",used:false,...p});tiles[p.y][p.x]="^"}
+  if(level>1&&r()>.35){const p=spot();features.push({id:`fountain-${level}-${seed}`,kind:"fountain",used:false,...p});tiles[p.y][p.x]="{"}
+  if(level>2&&r()>.5){const p=spot();features.push({id:`altar-${level}-${seed}`,kind:"altar",used:false,...p});tiles[p.y][p.x]="_"}
+  return { tiles, monsters, items, features, stairs, up, start };
 }
 
 function makeTown(): Floor {
@@ -79,12 +84,12 @@ function makeTown(): Floor {
   const buildings:[number,number,string][]=[[7,5,"H"],[20,4,"S"],[33,5,"C"],[8,16,"B"],[20,17,"T"],[33,16,"R"]];
   buildings.forEach(([x,y,g])=>{for(let yy=y-2;yy<=y+2;yy++)for(let xx=x-3;xx<=x+3;xx++)tiles[yy][xx]="#";tiles[y+2][x]=g});
   const stairs={x:20,y:11};tiles[11][20]=">"; const start={x:20,y:13};
-  return {tiles,monsters:[],items:[],stairs,up:start,start};
+  return {tiles,monsters:[],items:[],features:[],stairs,up:start,start};
 }
 
 function freshGame(): Game {
   const f = makeTown();
-  return { floor: 0, tiles: f.tiles, monsters: f.monsters, items: f.items, stairs: f.stairs, up:f.up,
+  return { floor: 0, tiles: f.tiles, monsters: f.monsters, items: f.items, features:f.features, stairs: f.stairs, up:f.up,
     player: { ...f.start, hp: 20, maxHp: 20, mana:12,maxMana:12, attack: 2, armor:0, strength:12,intelligence:12,wisdom:12,constitution:12,dexterity:12,charisma:12,level: 1, xp: 0, gold: 250, bank:0, potions: 1, hasEye:false, hasCure: false, weapon:"none", armorName:"clothes",spells:["pro","mle"] },
     turn: 0, deadline:2500,status: "playing", shopStock:DND_STOCK.map(x=>x.stock), bag:[{id:"start-heal",name:"potion of healing",kind:"potion",effect:"healing",qty:1}],awareness:0,floors:{0:f}, log: ["Welcome to the town of Larn.", "Your daughter is dying of dianthroritis. Find the cure in the volcanic depths."] };
 }
@@ -119,15 +124,31 @@ export default function Home() {
       if (item.kind === "armor" && item.amount > g.player.armor) { g.player.armor=item.amount; g.player.armorName=item.name; pushLog(g, `You equip the ${item.name}.`); }
       g.items = g.items.filter(i => i.id !== item.id);
     }
+    const feature=g.features.find(f=>f.x===g.player.x&&f.y===g.player.y&&!f.used);
+    if(feature?.kind==="trap"){
+      feature.used=true;g.tiles[feature.y][feature.x]=".";
+      const roll=Math.random();
+      if(roll<.34){const dmg=3+Math.floor(Math.random()*Math.max(4,g.floor));g.player.hp-=dmg;pushLog(g,`A hidden trap wounds you for ${dmg}.`)}
+      else if(roll<.67){g.player.gold=Math.max(0,g.player.gold-20-g.floor*5);pushLog(g,"A trap door scatters some of your gold.")}
+      else {g.player.dexterity=Math.max(3,g.player.dexterity-1);pushLog(g,"A dart numbs your limbs. Dexterity falls.")}
+    } else if(feature?.kind==="fountain"){
+      feature.used=true;g.tiles[feature.y][feature.x]=".";
+      if(Math.random()<.72){const n=Math.min(g.player.maxHp-g.player.hp,8+g.floor);g.player.hp+=n;g.player.mana=Math.min(g.player.maxMana,g.player.mana+5);pushLog(g,`The fountain restores ${n} health and refreshes your magic.`)}
+      else {g.player.hp=Math.max(1,g.player.hp-6);pushLog(g,"The fountain water is foul!")}
+    } else if(feature?.kind==="altar"){
+      feature.used=true;g.tiles[feature.y][feature.x]=".";
+      if(g.player.gold>=50){g.player.gold-=50;g.player.wisdom++;g.player.maxMana+=2;g.player.mana=g.player.maxMana;pushLog(g,"You offer 50 gold. The altar grants wisdom.")}
+      else pushLog(g,"The silent altar demands an offering you cannot afford.");
+    }
     const need = EXPERIENCE[Math.min(g.player.level,EXPERIENCE.length-1)];
     if (g.player.xp >= need) { g.player.level++; g.player.maxHp += 3+Math.floor(g.player.constitution/5); g.player.hp = g.player.maxHp; pushLog(g, `You become a ${RANKS[Math.min(g.player.level-1,RANKS.length-1)]}!`); }
     const tile=g.tiles[g.player.y][g.player.x];
     if (tile === ">" && g.floor < LAST_FLOOR) {
-      g.floors[g.floor]={tiles:g.tiles,monsters:g.monsters,items:g.items,stairs:g.stairs,up:g.up,start:{x:g.player.x,y:g.player.y}};
-      const n=g.floor+1,f=g.floors[n]??makeFloor(n);g.floors[n]=f;g.floor=n;g.tiles=f.tiles;g.monsters=f.monsters;g.items=f.items;g.stairs=f.stairs;g.up=f.up;Object.assign(g.player,f.up);pushLog(g, `You descend to ${g.floor<=10?`dungeon level ${g.floor}`:`volcanic level V${g.floor-10}`}.`);
+      g.floors[g.floor]={tiles:g.tiles,monsters:g.monsters,items:g.items,features:g.features,stairs:g.stairs,up:g.up,start:{x:g.player.x,y:g.player.y}};
+      const n=g.floor+1,f=g.floors[n]??makeFloor(n);g.floors[n]=f;g.floor=n;g.tiles=f.tiles;g.monsters=f.monsters;g.items=f.items;g.features=f.features??[];g.stairs=f.stairs;g.up=f.up;Object.assign(g.player,f.up);pushLog(g, `You descend to ${g.floor<=10?`dungeon level ${g.floor}`:`volcanic level V${g.floor-10}`}.`);
     } else if (tile === "<" && g.floor > 0) {
-      g.floors[g.floor]={tiles:g.tiles,monsters:g.monsters,items:g.items,stairs:g.stairs,up:g.up,start:{x:g.player.x,y:g.player.y}};
-      const next=g.floor-1,f=g.floors[next]??(next===0?makeTown():makeFloor(next));g.floors[next]=f;g.floor=next;g.tiles=f.tiles;g.monsters=f.monsters;g.items=f.items;g.stairs=f.stairs;g.up=f.up;Object.assign(g.player,next===0?f.start:f.stairs);pushLog(g,next===0?"You emerge in the town of Larn.":`You climb to dungeon level ${next}.`);
+      g.floors[g.floor]={tiles:g.tiles,monsters:g.monsters,items:g.items,features:g.features,stairs:g.stairs,up:g.up,start:{x:g.player.x,y:g.player.y}};
+      const next=g.floor-1,f=g.floors[next]??(next===0?makeTown():makeFloor(next));g.floors[next]=f;g.floor=next;g.tiles=f.tiles;g.monsters=f.monsters;g.items=f.items;g.features=f.features??[];g.stairs=f.stairs;g.up=f.up;Object.assign(g.player,next===0?f.start:f.stairs);pushLog(g,next===0?"You emerge in the town of Larn.":`You climb to dungeon level ${next}.`);
     } else if(g.floor===0){
       if(tile==="H"){g.player.hp=g.player.maxHp;pushLog(g,g.player.hasCure?"You return home with the cure. Your daughter will live!":"You rest at home and recover your health.");if(g.player.hasCure)g.status="won"}
       if(tile==="S")pushLog(g,"Welcome to the Larn Thrift Shoppe. Select an item to purchase.");
@@ -175,7 +196,7 @@ export default function Home() {
   const drink = useCallback(() => {const p=game.bag.find(x=>x.kind==="potion"&&x.effect==="healing");if(p)consumeItem(p.id);else update(g=>pushLog(g,"You have no healing potions."))}, [game.bag,consumeItem,update]);
   const escape = useCallback(() => update(g => { if (g.status !== "playing") return; if (!g.player.hasCure) return pushLog(g, "You cannot finish the quest without the cure."); pushLog(g, "Carry the cure back up through the dungeon to your home in Larn."); }), [update]);
   const save = useCallback(() => { localStorage.setItem("jeremys-larn-save", JSON.stringify(game)); update(g => pushLog(g, "Game saved in this browser.")); }, [game, update]);
-  const load = useCallback(() => { const raw=localStorage.getItem("jeremys-larn-save"); if(raw){const old=JSON.parse(raw) as Game,base=freshGame();setGame({...base,...old,deadline:old.deadline??2500,floors:old.floors??base.floors,shopStock:old.shopStock??base.shopStock,player:{...base.player,...old.player,spells:old.player.spells??base.player.spells}})} }, []);
+  const load = useCallback(() => { const raw=localStorage.getItem("jeremys-larn-save"); if(raw){const old=JSON.parse(raw) as Game,base=freshGame();const floors=old.floors??base.floors;Object.values(floors).forEach(f=>f.features??=[]);setGame({...base,...old,features:old.features??[],deadline:old.deadline??2500,floors,shopStock:old.shopStock??base.shopStock,player:{...base.player,...old.player,spells:old.player.spells??base.player.spells}})} }, []);
   const buy = useCallback((item:ShopItem,index:number)=>update(g=>{
     if(!g.shopStock[index])return pushLog(g,`${item.name} is sold out.`);
     if(g.player.gold<item.price)return pushLog(g,`You need ${item.price-g.player.gold} more gold.`);
@@ -221,7 +242,7 @@ export default function Home() {
       </aside>
       <section className="map-wrap">
         <div className="map" role="application" aria-label="Dungeon map">
-          {game.tiles.flatMap((row,y)=>row.map((tile,x)=>{ const e=entities.get(`${x},${y}`); const townNames:Record<string,string>={H:"Your home",S:"DND Store",C:"College of Larn",B:"Bank of Larn",T:"Trading Post",R:"Larn Revenue Service"}; return <span key={`${x}-${y}`} title={e?.title||townNames[tile]} className={e?.kind || (tile==="#"?"wall":tile===">"||tile==="<"||tile==="Ω"?"stairs":townNames[tile]?"town-place":"floor")}>{e?.glyph || (tile==="#"?"▓":tile)}</span>; }))}
+          {game.tiles.flatMap((row,y)=>row.map((tile,x)=>{ const e=entities.get(`${x},${y}`); const townNames:Record<string,string>={H:"Your home",S:"DND Store",C:"College of Larn",B:"Bank of Larn",T:"Trading Post",R:"Larn Revenue Service"};const featureNames:Record<string,string>={"^":"Trap","{":"Fountain","_":"Altar"}; return <span key={`${x}-${y}`} title={e?.title||townNames[tile]||featureNames[tile]} className={e?.kind || (tile==="#"?"wall":tile===">"||tile==="<"||tile==="Ω"?"stairs":featureNames[tile]?"feature":townNames[tile]?"town-place":"floor")}>{e?.glyph || (tile==="#"?"▓":tile)}</span>; }))}
         </div>
         {atStore&&<div className="shop-card"><div className="shop-head"><span>DND STORE · LARN THRIFT SHOPPE</span><strong>{game.player.gold} GP</strong></div><p>Original 12.3 stock and prices. Purchases equip automatically where appropriate.</p><div className="shop-list">{DND_STOCK.map((it,i)=><button key={it.name} disabled={!game.shopStock[i]||game.player.gold<it.price} onClick={()=>buy(it,i)}><span>{it.name}<small>{it.kind}</small></span><b>{it.price} gp</b><em>{game.shopStock[i]}</em></button>)}</div><small className="shop-exit">Move away from the S to leave the store.</small></div>}
         {service!=="none"&&<div className="shop-card"><div className="shop-head"><span>{service==="college"?"COLLEGE OF LARN":service==="bank"?"BANK OF LARN":service==="trade"?"TRADING POST":"SPELL BOOK"}</span><button onClick={()=>setService("none")}>Close</button></div>
